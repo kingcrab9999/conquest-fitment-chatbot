@@ -1,0 +1,691 @@
+<!--
+  Fitment Finder Widget — Conquest Auto Parts
+  ─────────────────────────────────────────────
+  Self-contained: no external fonts, no CDN dependencies, safe to paste
+  directly into a Shopify "Custom Liquid" section/block.
+
+  BEFORE GOING LIVE: change API_BASE below from localhost to your hosted
+  backend URL (e.g. https://your-app.onrender.com) once it's deployed.
+-->
+<div id="cap-fitment-widget"></div>
+
+<style>
+  #cap-fitment-widget {
+    --ink: #1a1d21;
+    --steel: #4b5563;
+    --paper: #ffffff;
+    --line: #dcdad5;
+    --signal: #d94a1f;
+    --signal-dark: #b53a15;
+    --confirm: #2f7a52;
+    --radius: 14px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    max-width: 520px;
+    margin: 0 auto;
+    background: var(--paper);
+    border: 2px solid var(--ink);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  }
+  #cap-fitment-widget * { box-sizing: border-box; }
+
+  .cap-topstripe { height: 5px; background: var(--signal); }
+
+  .cap-header {
+    background: var(--ink);
+    color: #fff;
+    padding: 18px 18px 16px;
+  }
+  .cap-header-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .cap-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--signal);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  .cap-badge-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #fff;
+  }
+  .cap-header-title {
+    font-size: 19px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+  }
+  .cap-header-sub {
+    font-size: 14px;
+    line-height: 1.5;
+    color: #d7dae0;
+    margin-top: 4px;
+  }
+
+  .cap-examples {
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--line);
+    background: #faf9f7;
+  }
+  .cap-examples-label {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--steel);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+  }
+  .cap-example-chip {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: #fff;
+    border: 1.5px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14.5px;
+    color: var(--ink);
+    margin-bottom: 6px;
+    cursor: pointer;
+  }
+  .cap-example-chip:hover { border-color: var(--signal); color: var(--signal-dark); }
+  .cap-example-chip:last-child { margin-bottom: 0; }
+  .cap-example-chip::before { content: "\201C"; color: var(--signal); font-weight: 800; margin-right: 2px; }
+
+  .cap-picker {
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .cap-picker-label {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--steel);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+  }
+  .cap-picker-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+  }
+  .cap-picker select {
+    width: 100%;
+    padding: 12px 10px;
+    font-size: 15px;
+    font-weight: 600;
+    border: 2px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--ink);
+  }
+  .cap-picker select:disabled { color: #b3b3b0; background: #f0f0ee; }
+
+  /* The "vehicle tag" — signature element. Once Y/M/M is set, it replaces
+     the picker with a stamped work-order-style tag rather than a generic
+     summary line. */
+  .cap-vehicle-tag {
+    display: none;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+    align-items: center;
+    gap: 10px;
+    background: #faf9f7;
+  }
+  .cap-vehicle-tag.active { display: flex; }
+  .cap-vehicle-tag-body {
+    border: 2px dashed var(--steel);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    color: var(--ink);
+    flex: 1;
+  }
+  .cap-vehicle-tag button {
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    background: var(--steel);
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    padding: 8px 12px;
+  }
+
+  .cap-thread {
+    padding: 16px 18px;
+    min-height: 100px;
+    max-height: 440px;
+    overflow-y: auto;
+  }
+  .cap-msg { margin-bottom: 14px; display: flex; }
+  .cap-msg.bot { justify-content: flex-start; }
+  .cap-msg.user { justify-content: flex-end; }
+  .cap-bubble {
+    max-width: 88%;
+    padding: 11px 14px;
+    border-radius: 10px;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .cap-msg.bot .cap-bubble { background: #eeeeec; color: var(--ink); }
+  .cap-msg.user .cap-bubble { background: var(--ink); color: #fff; }
+  .cap-msg.bot .cap-bubble::before {
+    content: "🔧 ";
+  }
+
+  .cap-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 14px; }
+  .cap-chip {
+    font-size: 14.5px;
+    font-weight: 600;
+    padding: 9px 15px;
+    border: 2px solid var(--steel);
+    border-radius: 999px;
+    background: #fff;
+    cursor: pointer;
+    color: var(--ink);
+  }
+  .cap-chip:hover { border-color: var(--signal); color: var(--signal-dark); background: #fdf1ec; }
+
+  .cap-product {
+    border: 2px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    background: #fff;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .cap-product:hover { border-color: var(--signal); }
+  .cap-product img {
+    width: 52px; height: 52px; object-fit: contain;
+    border-radius: 6px; background: #f4f4f2; flex-shrink: 0;
+  }
+  .cap-product-info { flex: 1; min-width: 0; }
+  .cap-product-title {
+    font-size: 14.5px; font-weight: 700; color: var(--ink);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .cap-product-meta {
+    font-size: 12.5px; color: var(--steel); margin-top: 3px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .cap-product-price { font-size: 16px; font-weight: 800; color: var(--confirm); white-space: nowrap; }
+
+  .cap-input-row {
+    display: flex;
+    gap: 10px;
+    padding: 14px 18px;
+    border-top: 2px solid var(--line);
+    background: #fff;
+  }
+  .cap-input-row input {
+    flex: 1;
+    padding: 12px 14px;
+    font-size: 15.5px;
+    border: 2px solid var(--line);
+    border-radius: 8px;
+  }
+  .cap-input-row input:focus { outline: 3px solid var(--signal); outline-offset: -1px; }
+  .cap-input-row button {
+    padding: 12px 20px;
+    font-size: 15px;
+    font-weight: 800;
+    background: var(--signal);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .cap-input-row button:hover { background: var(--signal-dark); }
+  .cap-input-row button:disabled { background: #e2b8a8; cursor: not-allowed; }
+
+  .cap-loading { font-size: 14px; color: var(--steel); font-style: italic; }
+
+  /* Confirmation modal — blocks navigation until the customer acknowledges
+     a side/color/engine/package qualifier, so they don't click straight
+     through to checkout without noticing the part is side- or option-specific. */
+  .cap-modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .cap-modal-backdrop.active { display: flex; }
+  .cap-modal {
+    background: #fff;
+    border-radius: 14px;
+    max-width: 380px;
+    width: 100%;
+    padding: 22px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  }
+  .cap-modal-icon {
+    font-size: 28px;
+    margin-bottom: 8px;
+  }
+  .cap-modal-title {
+    font-size: 17px;
+    font-weight: 800;
+    color: var(--ink);
+    margin-bottom: 10px;
+  }
+  .cap-modal-check {
+    background: #fdf1ec;
+    border: 2px solid var(--signal);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--signal-dark);
+    margin-bottom: 14px;
+  }
+  .cap-modal-product {
+    font-size: 13.5px;
+    color: var(--steel);
+    margin-bottom: 18px;
+    line-height: 1.4;
+  }
+  .cap-modal-buttons { display: flex; gap: 10px; }
+  .cap-modal-buttons button {
+    flex: 1;
+    padding: 12px;
+    font-size: 14.5px;
+    font-weight: 700;
+    border-radius: 8px;
+    border: 2px solid var(--line);
+    cursor: pointer;
+  }
+  .cap-modal-confirm { background: var(--signal); color: #fff; border-color: var(--signal) !important; }
+  .cap-modal-confirm:hover { background: var(--signal-dark); }
+  .cap-modal-cancel { background: #fff; color: var(--ink); }
+  .cap-modal-cancel:hover { background: #f4f4f2; }
+
+  @media (max-width: 480px) {
+    .cap-header-title { font-size: 17px; }
+    .cap-picker-row { grid-template-columns: 1fr; }
+  }
+</style>
+
+<script>
+(function () {
+  // ── CONFIG — change this once the backend is deployed ──────────────
+  const API_BASE = 'http://localhost:3001';
+
+  const EXAMPLE_PROMPTS = [
+    "I need a headlight for my 2018 Ford F-150",
+    "Door handle for a 2015 Silverado, driver side",
+    "Does this fit a 2020 Ram 1500 with the tow package?",
+  ];
+
+  const root = document.getElementById('cap-fitment-widget');
+  root.innerHTML = `
+    <div class="cap-topstripe"></div>
+    <div class="cap-header">
+      <div class="cap-header-row">
+        <span class="cap-badge"><span class="cap-badge-dot"></span>AI PARTS FINDER</span>
+      </div>
+      <div class="cap-header-title">Not sure which part fits your vehicle?</div>
+      <div class="cap-header-sub">Just ask me in plain English — like you're talking to someone at the parts counter. I'll ask a couple of quick follow-up questions if I need more detail to get you the exact right part.</div>
+    </div>
+    <div class="cap-examples" id="cap-examples">
+      <div class="cap-examples-label">Try asking:</div>
+      ${EXAMPLE_PROMPTS.map((p, i) => `<button class="cap-example-chip" data-example="${i}">${p}</button>`).join('')}
+    </div>
+    <div class="cap-picker" id="cap-picker">
+      <div class="cap-picker-label">Or pick your vehicle directly</div>
+      <div class="cap-picker-row">
+        <select id="cap-year"><option value="">Year</option></select>
+        <select id="cap-make" disabled><option value="">Make</option></select>
+        <select id="cap-model" disabled><option value="">Model</option></select>
+      </div>
+    </div>
+    <div class="cap-vehicle-tag" id="cap-vehicle-tag">
+      <div class="cap-vehicle-tag-body" id="cap-vehicle-tag-text"></div>
+      <button id="cap-change-vehicle">Change</button>
+    </div>
+    <div class="cap-thread" id="cap-thread">
+      <div class="cap-msg bot"><div class="cap-bubble">Hi! Tell me what part you're looking for and for which vehicle — or use the picker above.</div></div>
+    </div>
+    <div class="cap-input-row">
+      <input id="cap-input" type="text" placeholder="Type your question here…" />
+      <button id="cap-send">Send</button>
+    </div>
+    <div class="cap-modal-backdrop" id="cap-modal-backdrop">
+      <div class="cap-modal">
+        <div class="cap-modal-icon">⚠️</div>
+        <div class="cap-modal-title">Please double-check before ordering</div>
+        <div class="cap-modal-check" id="cap-modal-check"></div>
+        <div class="cap-modal-product" id="cap-modal-product"></div>
+        <div class="cap-modal-buttons">
+          <button class="cap-modal-cancel" id="cap-modal-cancel">Let me check</button>
+          <button class="cap-modal-confirm" id="cap-modal-confirm">Yes — Add to Cart</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const thread = root.querySelector('#cap-thread');
+  const yearSel = root.querySelector('#cap-year');
+  const makeSel = root.querySelector('#cap-make');
+  const modelSel = root.querySelector('#cap-model');
+  const picker = root.querySelector('#cap-picker');
+  const examples = root.querySelector('#cap-examples');
+  const vehicleTag = root.querySelector('#cap-vehicle-tag');
+  const vehicleTagText = root.querySelector('#cap-vehicle-tag-text');
+  const input = root.querySelector('#cap-input');
+  const sendBtn = root.querySelector('#cap-send');
+
+  let vehicle = { year: null, make: null, model: null };
+  let lastCriteria = {};
+
+  function hideExamples() {
+    examples.style.display = 'none';
+  }
+
+  const modalBackdrop = root.querySelector('#cap-modal-backdrop');
+  const modalCheck = root.querySelector('#cap-modal-check');
+  const modalProduct = root.querySelector('#cap-modal-product');
+  const modalConfirmBtn = root.querySelector('#cap-modal-confirm');
+  const modalCancelBtn = root.querySelector('#cap-modal-cancel');
+
+  const QUALIFIER_LABELS = {
+    side: (v) => `This part is for the ${v.toUpperCase()} side`,
+    color: (v) => `This part's color/finish is: ${v}`,
+    engine: (v) => `This part requires the ${v} engine`,
+    option_package: (v) => `This part requires: ${v}`,
+    other_qualifiers: (v) => v,
+  };
+
+  // Returns a list of human-readable warnings for any qualifier fields this
+  // product actually has set — used to decide whether to interrupt with the
+  // confirmation modal before letting the customer click through.
+  function getQualifierWarnings(product) {
+    const warnings = [];
+    for (const field of ['side', 'color', 'engine', 'option_package', 'other_qualifiers']) {
+      if (product[field]) warnings.push(QUALIFIER_LABELS[field](product[field]));
+    }
+    return warnings;
+  }
+
+  function showQualifierConfirm(product, onConfirm) {
+    const warnings = getQualifierWarnings(product);
+    modalCheck.innerHTML = warnings.map((w) => `✔ ${w}`).join('<br>');
+    modalProduct.textContent = product.title;
+    modalBackdrop.classList.add('active');
+
+    const cleanup = () => {
+      modalBackdrop.classList.remove('active');
+      modalConfirmBtn.onclick = null;
+      modalCancelBtn.onclick = null;
+    };
+    modalConfirmBtn.onclick = () => { cleanup(); onConfirm(); };
+    modalCancelBtn.onclick = () => { cleanup(); };
+  }
+
+  // Builds the note that gets attached to the cart line item — this is what
+  // ends up printed on the packing slip, so warehouse staff can see exactly
+  // what the customer confirmed without having to guess from the SKU alone.
+  function buildConfirmationNote(product) {
+    const parts = [];
+    if (vehicle.year && vehicle.make && vehicle.model) {
+      parts.push(`Vehicle: ${vehicle.year} ${vehicle.make} ${vehicle.model}`);
+    }
+    for (const field of ['side', 'color', 'engine', 'option_package', 'other_qualifiers']) {
+      if (product[field]) parts.push(QUALIFIER_LABELS[field](product[field]));
+    }
+    return parts.join(' — ');
+  }
+
+  function addToCartWithNote(product) {
+    if (!product.variantId) { openProduct(product); return; }
+    const note = buildConfirmationNote(product);
+    const params = new URLSearchParams();
+    params.set('id', product.variantId);
+    params.set('quantity', '1');
+    params.set('properties[Customer Confirmed Fitment]', note);
+    params.set('return_to', '/cart');
+    window.location.href = `/cart/add?${params.toString()}`;
+  }
+
+  function openProduct(product) {
+    if (!product.handle) return;
+    window.open(`/products/${product.handle}`, '_blank');
+  }
+
+  function handleProductClick(product, onPick) {
+    const warnings = getQualifierWarnings(product);
+    if (warnings.length > 0 && product.variantId) {
+      showQualifierConfirm(product, () => addToCartWithNote(product));
+    } else if (product.handle) {
+      openProduct(product);
+    } else if (onPick) {
+      onPick(product);
+    }
+  }
+
+  function addBotMessage(html) {
+    const div = document.createElement('div');
+    div.className = 'cap-msg bot';
+    div.innerHTML = `<div class="cap-bubble">${html}</div>`;
+    thread.appendChild(div);
+    thread.scrollTop = thread.scrollHeight;
+    return div;
+  }
+  function addUserMessage(text) {
+    const div = document.createElement('div');
+    div.className = 'cap-msg user';
+    div.innerHTML = `<div class="cap-bubble"></div>`;
+    div.firstChild.textContent = text;
+    thread.appendChild(div);
+    thread.scrollTop = thread.scrollHeight;
+  }
+  function addLoading() {
+    const div = document.createElement('div');
+    div.className = 'cap-msg bot';
+    div.innerHTML = `<div class="cap-bubble cap-loading">Checking…</div>`;
+    thread.appendChild(div);
+    thread.scrollTop = thread.scrollHeight;
+    return div;
+  }
+  function addChips(labels, onPick) {
+    const div = document.createElement('div');
+    div.className = 'cap-chips';
+    labels.forEach((label) => {
+      const chip = document.createElement('button');
+      chip.className = 'cap-chip';
+      chip.textContent = label;
+      chip.onclick = () => onPick(label);
+      div.appendChild(chip);
+    });
+    thread.appendChild(div);
+    thread.scrollTop = thread.scrollHeight;
+  }
+  function addProducts(products, onPick) {
+    products.forEach((p) => {
+      const div = document.createElement('div');
+      div.className = 'cap-product';
+      div.innerHTML = `
+        ${p.image ? `<img src="${p.image}" alt="">` : '<div style="width:52px;height:52px;background:#f4f4f2;border-radius:6px;flex-shrink:0;"></div>'}
+        <div class="cap-product-info">
+          <div class="cap-product-title"></div>
+          <div class="cap-product-meta"></div>
+        </div>
+        <div class="cap-product-price"></div>
+      `;
+      div.querySelector('.cap-product-title').textContent = p.title;
+      div.querySelector('.cap-product-meta').textContent = p.sku;
+      div.querySelector('.cap-product-price').textContent = p.price ? `$${p.price}` : '';
+      div.onclick = () => handleProductClick(p, onPick);
+      thread.appendChild(div);
+    });
+    thread.scrollTop = thread.scrollHeight;
+  }
+
+  // ── Example prompts (older-customer affordance: shows exactly what to type) ──
+  examples.querySelectorAll('.cap-example-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const text = EXAMPLE_PROMPTS[Number(btn.dataset.example)];
+      hideExamples();
+      sendMessage(text);
+    });
+  });
+
+  // ── Dropdown path (free, no AI) ─────────────────────────────────
+  async function loadYears() {
+    const res = await fetch(`${API_BASE}/api/years`);
+    const { years } = await res.json();
+    yearSel.innerHTML = '<option value="">Year</option>' + years.map((y) => `<option value="${y}">${y}</option>`).join('');
+  }
+  async function loadMakes() {
+    const year = yearSel.value;
+    makeSel.disabled = !year;
+    modelSel.disabled = true;
+    if (!year) { makeSel.innerHTML = '<option value="">Make</option>'; return; }
+    const res = await fetch(`${API_BASE}/api/makes?year=${year}`);
+    const { makes } = await res.json();
+    makeSel.innerHTML = '<option value="">Make</option>' + makes.map((m) => `<option value="${m}">${m}</option>`).join('');
+  }
+  async function loadModels() {
+    const year = yearSel.value;
+    const make = makeSel.value;
+    modelSel.disabled = !make;
+    if (!make) { modelSel.innerHTML = '<option value="">Model</option>'; return; }
+    const res = await fetch(`${API_BASE}/api/models?year=${year}&make=${make}`);
+    const { models } = await res.json();
+    modelSel.innerHTML = '<option value="">Model</option>' + models.map((m) => `<option value="${m}">${m}</option>`).join('');
+  }
+  function checkVehicleComplete() {
+    if (yearSel.value && makeSel.value && modelSel.value) {
+      vehicle = { year: Number(yearSel.value), make: makeSel.value, model: modelSel.value };
+      lastCriteria = { ...vehicle };
+      hideExamples();
+      picker.style.display = 'none';
+      vehicleTag.classList.add('active');
+      vehicleTagText.textContent = `${vehicle.year} ${vehicle.make.toUpperCase()} ${vehicle.model.toUpperCase()}`;
+      addBotMessage(`Got it — ${vehicle.year} ${vehicle.make} ${vehicle.model}. What part are you looking for?`);
+    }
+  }
+
+  yearSel.addEventListener('change', () => { loadMakes(); });
+  makeSel.addEventListener('change', () => { loadModels(); });
+  modelSel.addEventListener('change', checkVehicleComplete);
+
+  root.querySelector('#cap-change-vehicle').onclick = () => {
+    vehicle = { year: null, make: null, model: null };
+    lastCriteria = {};
+    picker.style.display = 'block';
+    vehicleTag.classList.remove('active');
+  };
+
+  loadYears();
+
+  // ── Free-text path (calls the backend, which calls Claude only when needed) ──
+  async function sendMessage(text) {
+    if (!text) return;
+    hideExamples();
+    addUserMessage(text);
+    input.value = '';
+    sendBtn.disabled = true;
+    const loadingEl = addLoading();
+
+    try {
+      const res = await fetch(`${API_BASE}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, context: lastCriteria }),
+      });
+      const data = await res.json();
+      loadingEl.remove();
+
+      lastCriteria = data.criteria || lastCriteria;
+      addBotMessage(data.reply);
+
+      if (data.needsProductSelection && data.products.length) {
+        addProducts(data.products, (p) => {
+          addUserMessage(p.title);
+          const loading2 = addLoading();
+          fetch(`${API_BASE}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: p.title, context: lastCriteria }),
+          })
+            .then((r) => r.json())
+            .then((d2) => {
+              loading2.remove();
+              lastCriteria = d2.criteria || lastCriteria;
+              addBotMessage(d2.reply);
+              if (d2.products?.length) addProducts(d2.products);
+              maybeAddQualifierChips(d2);
+            });
+        });
+      } else if (data.products && data.products.length) {
+        addProducts(data.products);
+      }
+      maybeAddQualifierChips(data);
+    } catch (e) {
+      loadingEl.remove();
+      addBotMessage("Something went wrong on my end — mind trying that again?");
+    } finally {
+      sendBtn.disabled = false;
+    }
+  }
+
+  // If the response includes qualifier options with more than one value,
+  // offer them as quick-reply chips (free — this just re-runs the local
+  // match, no AI call) instead of making the customer type a full sentence.
+  function maybeAddQualifierChips(data) {
+    const q = data.qualifiers;
+    if (!q) return;
+    const fieldOrder = ['side', 'engine', 'color', 'option_package'];
+    for (const field of fieldOrder) {
+      if (q[field] && q[field].length > 1) {
+        addChips(q[field], async (value) => {
+          addUserMessage(value);
+          lastCriteria = { ...lastCriteria, [field]: value };
+          const loading2 = addLoading();
+          const res = await fetch(`${API_BASE}/api/match`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(lastCriteria),
+          });
+          const d2 = await res.json();
+          loading2.remove();
+          if (d2.matchCount === 1) {
+            addBotMessage('Found it — this fits your vehicle.');
+          } else if (d2.matchCount === 0) {
+            addBotMessage("That combination doesn't match anything in stock — want to try different options?");
+          } else {
+            addBotMessage(`${d2.matchCount} matching options.`);
+          }
+          addProducts(d2.products);
+        });
+        break; // ask one qualifier at a time
+      }
+    }
+  }
+
+  sendBtn.addEventListener('click', () => sendMessage(input.value.trim()));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(input.value.trim()); });
+})();
+</script>

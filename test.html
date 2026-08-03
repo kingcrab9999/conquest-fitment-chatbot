@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Fitment Finder — Local Test</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; max-width: 500px; margin: 40px auto; padding: 0 20px; }
+    select, input, button { font-size: 16px; padding: 8px; margin: 4px 0; width: 100%; box-sizing: border-box; }
+    button { background: #111; color: white; border: none; cursor: pointer; }
+    #results, #chatlog { margin-top: 20px; border-top: 1px solid #ddd; padding-top: 12px; }
+    .product { padding: 8px; border-bottom: 1px solid #eee; }
+    .msg { margin: 6px 0; padding: 8px; border-radius: 6px; }
+    .msg.user { background: #eef; text-align: right; }
+    .msg.bot { background: #f4f4f4; }
+    h3 { margin-top: 28px; }
+  </style>
+</head>
+<body>
+  <h2>Fitment Finder — Local Test</h2>
+
+  <h3>Dropdown path (free, no AI)</h3>
+  <label>Year</label>
+  <select id="year"></select>
+  <label>Make</label>
+  <select id="make"></select>
+  <label>Model</label>
+  <select id="model"></select>
+  <div id="results"></div>
+
+  <h3>Free-text path (calls Claude)</h3>
+  <div id="chatlog"></div>
+  <input id="chatInput" placeholder="e.g. 2015 Silverado LTZ with tow package" />
+  <button onclick="sendChat()">Send</button>
+
+  <script>
+    const API = 'http://localhost:3001';
+
+    async function loadYears() {
+      const res = await fetch(`${API}/api/years`);
+      const { years } = await res.json();
+      const sel = document.getElementById('year');
+      sel.innerHTML = '<option value="">Any</option>' + years.map(y => `<option value="${y}">${y}</option>`).join('');
+    }
+    async function loadMakes() {
+      const year = document.getElementById('year').value;
+      const res = await fetch(`${API}/api/makes?year=${year}`);
+      const { makes } = await res.json();
+      const sel = document.getElementById('make');
+      sel.innerHTML = '<option value="">Any</option>' + makes.map(m => `<option value="${m}">${m}</option>`).join('');
+      loadModels();
+    }
+    async function loadModels() {
+      const year = document.getElementById('year').value;
+      const make = document.getElementById('make').value;
+      const res = await fetch(`${API}/api/models?year=${year}&make=${make}`);
+      const { models } = await res.json();
+      const sel = document.getElementById('model');
+      sel.innerHTML = '<option value="">Any</option>' + models.map(m => `<option value="${m}">${m}</option>`).join('');
+      loadResults();
+    }
+    async function loadResults() {
+      const year = document.getElementById('year').value;
+      const make = document.getElementById('make').value;
+      const model = document.getElementById('model').value;
+      const res = await fetch(`${API}/api/match`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year, make, model }),
+      });
+      const data = await res.json();
+      document.getElementById('results').innerHTML =
+        `<strong>${data.matchCount} matches</strong>` +
+        data.products.map(p => `<div class="product">${p.title} — $${p.price} (${p.sku})</div>`).join('');
+    }
+
+    document.getElementById('year').addEventListener('change', loadMakes);
+    document.getElementById('make').addEventListener('change', loadModels);
+    document.getElementById('model').addEventListener('change', loadResults);
+    loadYears();
+
+    let chatContext = {};
+    function syncDropdownsIntoChatContext() {
+      const year = document.getElementById('year').value;
+      const make = document.getElementById('make').value;
+      const model = document.getElementById('model').value;
+      if (year) chatContext.year = Number(year);
+      if (make) chatContext.make = make;
+      if (model) chatContext.model = model;
+    }
+    document.getElementById('year').addEventListener('change', syncDropdownsIntoChatContext);
+    document.getElementById('make').addEventListener('change', syncDropdownsIntoChatContext);
+    document.getElementById('model').addEventListener('change', syncDropdownsIntoChatContext);
+
+    async function sendChat() {
+      const input = document.getElementById('chatInput');
+      const message = input.value;
+      if (!message) return;
+      const log = document.getElementById('chatlog');
+      log.innerHTML += `<div class="msg user">${message}</div>`;
+      input.value = '';
+
+      const res = await fetch(`${API}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, context: chatContext }),
+      });
+      const data = await res.json();
+      chatContext = data.criteria;
+      log.innerHTML += `<div class="msg bot">${data.reply}</div>` +
+        data.products.map(p => `<div class="product">${p.title} — $${p.price} (${p.sku})</div>`).join('');
+    }
+  </script>
+</body>
+</html>
