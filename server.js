@@ -22,6 +22,8 @@
 require('dotenv').config();
 const express = require('express');
 const {
+  loadIndex,
+  upsertProduct,
   getYears,
   getMakes,
   getModels,
@@ -33,6 +35,11 @@ const {
 } = require('./fitmentQuery');
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const SHOPIFY_STORE = process.env.SHOPIFY_STORE || 'parts1.myshopify.com';
+const SHOPIFY_CLIENT_ID = process.env.SHOPIFY_CLIENT_ID;
+const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
+const ADMIN_SECRET = process.env.ADMIN_SECRET;
+const SHOPIFY_API_VERSION = '2025-01';
 const ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001';
 const PORT = process.env.PORT || 3001;
 
@@ -40,7 +47,7 @@ const app = express();
 app.use(express.json());
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, x-admin-secret');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
@@ -63,6 +70,116 @@ function trimForDisplay(p) {
     other_qualifiers: p.other_qualifiers,
   };
 }
+
+// ── On-demand single-product reindexing ──────────────────────────
+// Called by the importer right after a new product is created, so it shows
+// up in customer searches within seconds instead of waiting for the next
+// full deploy (which is when buildIndex.js normally rebuilds the whole
+// index from scratch).
+
+let shopifyToken = null;
+let shopifyTokenExpiry = 0;
+async function getShopifyToken() {
+  if (shopifyToken && Date.now() < shopifyTokenExpiry) return shopifyToken;
+  const res = await fetch(`https://${SHOPIFY_STORE}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id: SHOPIFY_CLIENT_ID,
+      client_secret: SHOPIFY_CLIENT_SECRET,
+      grant_type: 'client_credentials',
+    }),
+  });
+  if (!res.ok) throw new Error('Shopify auth failed: ' + (await res.text()));
+  const data = await res.json();
+  shopifyToken = data.access_token;
+  shopifyTokenExpiry = Date.now() + 23 * 60 * 60 * 1000;
+  return shopifyToken;
+}
+
+async function fetchSingleProduct(productId) {
+  const token = await getShopifyToken();
+  const res = await fetch(`https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+    body: JSON.stringify({
+      query: `query($id: ID!) {
+        product(id: $id) {
+          id
+          handle
+          title
+          featuredImage { url }
+          fitmentData: metafield(namespace: "fitment", key: "data") { value }
+          variants(first: 5) { edges { node { id sku price } } }
+        }
+      }`,
+      variables: { id: productId },
+    }),
+  });
+  const json = await res.json();
+  if (json.errors) throw new Error('Shopify GraphQL error: ' + JSON.stringify(json.errors));
+  return json.data.product;
+}
+
+// Same record shape as buildIndex.js's buildRecord() — kept in sync manually
+// since this runs in a different process (the live server) than the batch
+// index builder.
+function buildIndexRecord(product) {
+  if (!product.fitmentData || !product.fitmentData.value) return null;
+  let fitment;
+  try {
+    fitment = JSON.parse(product.fitmentData.value);
+  } catch (e) {
+    return null;
+  }
+  const variant = product.variants.edges[0]?.node;
+  if (!variant) return null;
+  const variantIdMatch = variant.id.match(/(\d+)$/);
+  const variantId = variantIdMatch ? variantIdMatch[1] : null;
+
+  return {
+    id: product.id,
+    handle: product.handle,
+    title: product.title,
+    image: product.featuredImage?.url || null,
+    sku: variant.sku,
+    price: variant.price,
+    variantId,
+    year_start: fitment.year_start ?? null,
+    year_end: fitment.year_end ?? (fitment.year_start ?? null),
+    makes: (fitment.makes || []).map((m) => m.toLowerCase()),
+    models: (fitment.models || []).map((m) => m.toLowerCase()),
+    side: fitment.side || null,
+    position: fitment.position || null,
+    color: fitment.color || null,
+    engine: fitment.engine || null,
+    option_package: fitment.option_package || null,
+    other_qualifiers: fitment.other_qualifiers || null,
+  };
+}
+
+app.post('/api/admin/reindex-product', async (req, res) => {
+  try {
+    if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const { productId } = req.body || {};
+    if (!productId) return res.status(400).json({ error: 'productId is required' });
+
+    const product = await fetchSingleProduct(productId);
+    if (!product) return res.status(404).json({ error: 'Product not found in Shopify' });
+
+    const record = buildIndexRecord(product);
+    if (!record) {
+      return res.json({ success: true, indexed: false, reason: 'No fitment data on this product — nothing to index.' });
+    }
+    upsertProduct(record);
+    res.json({ success: true, indexed: true, productId, title: product.title });
+  } catch (e) {
+    console.error('Reindex error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ── Free, no-AI endpoints ────────────────────────────────────────
 

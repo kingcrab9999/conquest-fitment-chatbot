@@ -14,6 +14,25 @@ function loadIndex() {
   return cachedIndex;
 }
 
+// Adds or replaces a single product's record in the live index, without
+// needing to re-fetch and rebuild the whole 13,000+ product catalog. Used
+// so a new import shows up in customer searches within seconds, rather than
+// waiting for the next full deploy/rebuild.
+function upsertProduct(record) {
+  const index = loadIndex();
+  const existingIdx = index.products.findIndex((p) => p.id === record.id);
+  if (existingIdx >= 0) {
+    index.products[existingIdx] = record;
+  } else {
+    index.products.push(record);
+  }
+  index.productCount = index.products.length;
+  index.builtAt = new Date().toISOString();
+  fs.writeFileSync(INDEX_FILE, JSON.stringify(index));
+  cachedIndex = index; // update in-memory cache immediately, don't wait for next stat check
+  cachedMtime = fs.statSync(INDEX_FILE).mtimeMs;
+}
+
 // Strips everything but letters/numbers and lowercases, so "F-150", "f150",
 // and "F 150" all compare equal. Free-text queries won't always match the
 // catalog's exact formatting, so every make/model comparison goes through
@@ -182,6 +201,7 @@ function groupBySimilarity(matches, threshold = 0.45) {
 
 module.exports = {
   loadIndex,
+  upsertProduct,
   getYears,
   getMakes,
   getModels,

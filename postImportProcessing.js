@@ -434,6 +434,27 @@ async function processNewProduct(productId) {
     }
   }
 
+  // Tell the live chatbot backend about this product so it's searchable
+  // right away, instead of waiting for the next full index rebuild (which
+  // only happens on deploy). Best-effort — if the chatbot is asleep
+  // (Render free tier) or unreachable, this just gets skipped without
+  // blocking the import.
+  const CHATBOT_URL = process.env.CHATBOT_URL;
+  const CHATBOT_ADMIN_SECRET = process.env.CHATBOT_ADMIN_SECRET;
+  if (CHATBOT_URL && CHATBOT_ADMIN_SECRET) {
+    try {
+      const reindexRes = await fetch(`${CHATBOT_URL}/api/admin/reindex-product`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': CHATBOT_ADMIN_SECRET },
+        body: JSON.stringify({ productId: product.id }),
+      });
+      const reindexData = await reindexRes.json();
+      summary.push(reindexData.indexed ? 'chatbotIndex=OK' : `chatbotIndex=skipped(${reindexData.reason || reindexData.error})`);
+    } catch (err) {
+      summary.push(`chatbotIndex=FAILED(${err.message})`);
+    }
+  }
+
   return { productId: product.id, title: product.title, summary: summary.join(', ') };
 }
 
