@@ -116,6 +116,7 @@ function buildRecord(product) {
     makes: (fitment.makes || []).map((m) => m.toLowerCase()),
     models: (fitment.models || []).map((m) => m.toLowerCase()),
     side: fitment.side || null,
+    position: fitment.position || null,
     color: fitment.color || null,
     engine: fitment.engine || null,
     option_package: fitment.option_package || null,

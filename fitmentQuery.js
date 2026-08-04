@@ -85,6 +85,7 @@ function getQualifierOptions(matches) {
   };
   return {
     side: distinct('side'),
+    position: distinct('position'),
     color: distinct('color'),
     engine: distinct('engine'),
     option_package: distinct('option_package'),
@@ -94,6 +95,7 @@ function getQualifierOptions(matches) {
 function filterByQualifiers(matches, answers = {}) {
   return matches.filter((p) => {
     if (answers.side && p.side && p.side !== answers.side) return false;
+    if (answers.position && p.position && p.position !== answers.position) return false;
     if (answers.color && p.color && p.color !== answers.color) return false;
     if (answers.engine && p.engine && p.engine !== answers.engine) return false;
     if (answers.option_package && p.option_package && p.option_package !== answers.option_package) return false;

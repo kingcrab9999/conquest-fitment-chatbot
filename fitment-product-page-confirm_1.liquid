@@ -1,0 +1,228 @@
+{% comment %}
+  Fitment Confirmation Gate — Conquest Auto Parts
+  ─────────────────────────────────────────────────
+  HOW TO ADD THIS:
+  1. Theme editor → open a product page → click into the "Product information"
+     section (main-product).
+  2. Add a new "Custom Liquid" block, positioned right after "Buy buttons"
+     (same spot as your existing trust-badge / shipping-strip custom liquid
+     blocks).
+  3. Paste this entire file's content into that block's Liquid box.
+  4. Save. No other setup needed — it reads the product's own fitment data
+     automatically and does nothing at all on products with no qualifiers.
+
+  WHAT IT DOES:
+  Only activates on products where fitment.data (side/color/engine/
+  option_package) is set. On those, it hides the real "Add to cart" and
+  dynamic checkout buttons via CSS and shows one substitute button in their
+  place. Clicking it shows a confirmation modal; confirming reveals the real
+  buttons again (now with a "Customer Confirmed Fitment" note attached to
+  the form, which prints on the packing slip) so the customer clicks
+  whichever real action they intended.
+{% endcomment %}
+
+<script id="cap-pdp-fitment-json" type="application/json">{{ product.metafields.fitment.data.value | json }}</script>
+<script id="cap-pdp-variant-id" type="application/json">{{ product.selected_or_first_available_variant.id | json }}</script>
+
+<style>
+  body.cap-fitment-locked .product-info__add-to-cart,
+  body.cap-fitment-locked .product-info__dynamic-checkout-button {
+    display: none !important;
+  }
+  .cap-pdp-modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 99999;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .cap-pdp-modal-backdrop.active { display: flex; }
+  .cap-pdp-modal {
+    background: #fff;
+    border-radius: 14px;
+    max-width: 380px;
+    width: 100%;
+    padding: 22px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .cap-pdp-modal-icon { font-size: 28px; margin-bottom: 8px; }
+  .cap-pdp-modal-title { font-size: 17px; font-weight: 800; color: #1a1d21; margin-bottom: 10px; }
+  .cap-pdp-modal-check {
+    background: #fdf1ec;
+    border: 2px solid #d94a1f;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #b53a15;
+    margin-bottom: 18px;
+  }
+  .cap-pdp-modal-buttons { display: flex; gap: 10px; }
+  .cap-pdp-modal-buttons button {
+    flex: 1;
+    padding: 12px;
+    font-size: 14.5px;
+    font-weight: 700;
+    border-radius: 8px;
+    border: 2px solid #dcdad5;
+    cursor: pointer;
+  }
+  .cap-pdp-modal-confirm { background: #d94a1f; color: #fff; border-color: #d94a1f !important; }
+  .cap-pdp-modal-confirm:hover { background: #b53a15; }
+  .cap-pdp-modal-cancel { background: #fff; color: #1a1d21; }
+  .cap-pdp-modal-cancel:hover { background: #f4f4f2; }
+</style>
+
+<div id="cap-pdp-substitute" style="display:none; margin-top: 12px; flex-direction:column; gap:8px;">
+  <button type="button" id="cap-pdp-substitute-cart" class="btn btn--primary w-full">Add to Cart</button>
+  <button type="button" id="cap-pdp-substitute-buynow" class="btn btn--secondary w-full" style="display:none;">Buy it now</button>
+</div>
+
+<div class="cap-pdp-modal-backdrop" id="cap-pdp-modal-backdrop">
+  <div class="cap-pdp-modal">
+    <div class="cap-pdp-modal-icon">⚠️</div>
+    <div class="cap-pdp-modal-title">Please double-check before ordering</div>
+    <div class="cap-pdp-modal-check" id="cap-pdp-modal-check"></div>
+    <div class="cap-pdp-modal-buttons">
+      <button class="cap-pdp-modal-cancel" id="cap-pdp-modal-cancel">Let me check</button>
+      <button class="cap-pdp-modal-confirm" id="cap-pdp-modal-confirm">Yes, that's correct</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var dataEl = document.getElementById('cap-pdp-fitment-json');
+  var rawText = (dataEl && dataEl.textContent || '').trim();
+  var fitment = {};
+  if (rawText) {
+    try { fitment = JSON.parse(rawText) || {}; } catch (e) { fitment = {}; }
+  }
+
+  var LABELS = {
+    side: function (v) {
+      var posPrefix = fitment.position ? fitment.position.toUpperCase() + ' ' : '';
+      if (v === 'both') {
+        return "This is a single part that fits either " + posPrefix.toLowerCase() + "side — it does NOT include both sides";
+      }
+      return 'This part is for the ' + posPrefix + v.toUpperCase() + ' side';
+    },
+    position: function (v) { return 'This part is for the ' + v.toUpperCase() + ' position'; },
+    color: function (v) { return "This part's color/finish is: " + v; },
+    engine: function (v) { return 'Only fits vehicles that came from the factory with the ' + v + ' engine'; },
+    option_package: function (v) { return 'Only fits vehicles that came from the factory with: ' + v; },
+    other_qualifiers: function (v) { return v; },
+  };
+
+  var warnings = [];
+  // side and position combine into a single line when both are present
+  // (e.g. "FRONT DRIVER side") rather than two separate, disconnected lines.
+  if (fitment.side) {
+    warnings.push(LABELS.side(fitment.side));
+  } else if (fitment.position) {
+    warnings.push(LABELS.position(fitment.position));
+  }
+  ['color', 'engine', 'option_package', 'other_qualifiers'].forEach(function (field) {
+    if (fitment[field]) warnings.push(LABELS[field](fitment[field]));
+  });
+
+  // Nothing to confirm on this product — don't touch the page at all.
+  if (warnings.length === 0) return;
+
+  var backdrop = document.getElementById('cap-pdp-modal-backdrop');
+  var checkEl = document.getElementById('cap-pdp-modal-check');
+  var confirmBtn = document.getElementById('cap-pdp-modal-confirm');
+  var cancelBtn = document.getElementById('cap-pdp-modal-cancel');
+  checkEl.innerHTML = warnings.map(function (w) { return '✔ ' + w; }).join('<br>');
+
+  var noteValue = warnings.join(' — ');
+
+  var variantIdEl = document.getElementById('cap-pdp-variant-id');
+  var variantId = null;
+  try { variantId = JSON.parse((variantIdEl && variantIdEl.textContent) || 'null'); } catch (e) { variantId = null; }
+
+  function addNoteToForm(form) {
+    if (!form) return;
+    var existing = form.querySelector('input[name="properties[Customer Confirmed Fitment]"]');
+    if (existing) { existing.value = noteValue; return; }
+    var input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'properties[Customer Confirmed Fitment]';
+    input.value = noteValue;
+    form.appendChild(input);
+  }
+
+  function findForm() {
+    return document.querySelector('form.js-product-form-main') || document.querySelector('form[action^="/cart/add"]');
+  }
+
+  // Hide the real buttons via a body class rather than touching the buttons
+  // themselves — this CSS rule re-applies continuously and automatically
+  // covers the buttons no matter how many times the theme re-renders them.
+  document.body.classList.add('cap-fitment-locked');
+
+  var substituteWrap = document.getElementById('cap-pdp-substitute');
+  var cartBtn = document.getElementById('cap-pdp-substitute-cart');
+  var buyNowBtn = document.getElementById('cap-pdp-substitute-buynow');
+  substituteWrap.style.display = 'flex';
+
+  // Only show a "Buy it now" substitute if this product's theme actually
+  // rendered something into the dynamic checkout container — some products/
+  // stores don't have it enabled, and there's nothing to substitute for then.
+  var dynamicCheckoutContainer = document.querySelector('.product-info__dynamic-checkout-button');
+  if (dynamicCheckoutContainer && dynamicCheckoutContainer.children.length > 0) {
+    buyNowBtn.style.display = 'block';
+  }
+
+  var pendingAction = null; // 'cart' | 'buynow'
+  cartBtn.addEventListener('click', function () {
+    pendingAction = 'cart';
+    backdrop.classList.add('active');
+  });
+  buyNowBtn.addEventListener('click', function () {
+    pendingAction = 'buynow';
+    backdrop.classList.add('active');
+  });
+
+  confirmBtn.onclick = function () {
+    backdrop.classList.remove('active');
+    document.body.classList.remove('cap-fitment-locked');
+    substituteWrap.style.display = 'none';
+
+    if (pendingAction === 'cart') {
+      // Fully seamless — add straight to cart with the note attached, no
+      // second click needed. Standard Shopify cart permalink pattern.
+      if (variantId) {
+        var params = new URLSearchParams();
+        params.set('id', variantId);
+        params.set('quantity', '1');
+        params.set('properties[Customer Confirmed Fitment]', noteValue);
+        params.set('return_to', '/cart');
+        window.location.href = '/cart/add?' + params.toString();
+      } else {
+        // No variant ID available for some reason — fall back to letting
+        // them use the real (now revealed) button rather than doing nothing.
+        var form = findForm();
+        addNoteToForm(form);
+      }
+    } else if (pendingAction === 'buynow') {
+      var form = findForm();
+      addNoteToForm(form);
+      // Attempt to trigger the real dynamic checkout button automatically.
+      // Some payment wallets (Apple Pay, Google Pay) may require a fully
+      // direct user gesture and ignore this synthetic click — if so, the
+      // real button is now revealed and the customer can click it themselves,
+      // still carrying the confirmed note.
+      var realBtn = dynamicCheckoutContainer && dynamicCheckoutContainer.querySelector('button, [role="button"], input[type="submit"]');
+      if (realBtn) realBtn.click();
+    }
+  };
+  cancelBtn.onclick = function () {
+    backdrop.classList.remove('active');
+  };
+})();
+</script>

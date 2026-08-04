@@ -77,7 +77,7 @@
   .cap-pdp-modal-cancel:hover { background: #f4f4f2; }
 </style>
 
-<div id="cap-pdp-substitute" style="display:none; margin-top: 12px; display:flex; flex-direction:column; gap:8px;">
+<div id="cap-pdp-substitute" style="display:none; margin-top: 12px; flex-direction:column; gap:8px;">
   <button type="button" id="cap-pdp-substitute-cart" class="btn btn--primary w-full">Add to Cart</button>
   <button type="button" id="cap-pdp-substitute-buynow" class="btn btn--secondary w-full" style="display:none;">Buy it now</button>
 </div>
@@ -104,15 +104,29 @@
   }
 
   var LABELS = {
-    side: function (v) { return 'This part is for the ' + v.toUpperCase() + ' side'; },
+    side: function (v) {
+      var posPrefix = fitment.position ? fitment.position.toUpperCase() + ' ' : '';
+      if (v === 'both') {
+        return "This is a single part that fits either " + posPrefix.toLowerCase() + "side — it does NOT include both sides";
+      }
+      return 'This part is for the ' + posPrefix + v.toUpperCase() + ' side';
+    },
+    position: function (v) { return 'This part is for the ' + v.toUpperCase() + ' position'; },
     color: function (v) { return "This part's color/finish is: " + v; },
-    engine: function (v) { return 'This part requires the ' + v + ' engine'; },
-    option_package: function (v) { return 'This part requires: ' + v; },
+    engine: function (v) { return 'Only fits vehicles that came from the factory with the ' + v + ' engine'; },
+    option_package: function (v) { return 'Only fits vehicles that came from the factory with: ' + v; },
     other_qualifiers: function (v) { return v; },
   };
 
   var warnings = [];
-  ['side', 'color', 'engine', 'option_package', 'other_qualifiers'].forEach(function (field) {
+  // side and position combine into a single line when both are present
+  // (e.g. "FRONT DRIVER side") rather than two separate, disconnected lines.
+  if (fitment.side) {
+    warnings.push(LABELS.side(fitment.side));
+  } else if (fitment.position) {
+    warnings.push(LABELS.position(fitment.position));
+  }
+  ['color', 'engine', 'option_package', 'other_qualifiers'].forEach(function (field) {
     if (fitment[field]) warnings.push(LABELS[field](fitment[field]));
   });
 

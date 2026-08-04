@@ -56,6 +56,7 @@ function trimForDisplay(p) {
     price: p.price,
     variantId: p.variantId,
     side: p.side,
+    position: p.position,
     color: p.color,
     engine: p.engine,
     option_package: p.option_package,
@@ -135,6 +136,7 @@ Given their message and any already-known criteria, output ONLY a JSON object (n
   "make": string or null,
   "model": string or null,
   "side": "driver" | "passenger" | null,
+  "position": "front" | "rear" | "upper" | "lower" | null,
   "color": string or null,
   "engine": string or null,
   "option_package": string or null,
@@ -192,7 +194,7 @@ app.post('/api/chat', async (req, res) => {
         criteria,
         matchCount: null,
         products: [],
-        qualifiers: { side: [], color: [], engine: [], option_package: [] },
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
       });
     }
 
@@ -211,7 +213,7 @@ app.post('/api/chat', async (req, res) => {
         criteria,
         matchCount: matches.length,
         products: [],
-        qualifiers: { side: [], color: [], engine: [], option_package: [] },
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
       });
     }
 
@@ -231,7 +233,7 @@ app.post('/api/chat', async (req, res) => {
         criteria,
         matchCount: matches.length,
         products: options.map(trimForDisplay),
-        qualifiers: { side: [], color: [], engine: [], option_package: [] },
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
         needsProductSelection: true,
       });
     }
