@@ -84,7 +84,7 @@ Given a product title, tags, and description, output ONLY a JSON object (no mark
   "makes": [string],
   "models": [string],
   "side": "driver" | "passenger" | "both" | null,
-  "position": "front" | "rear" | "upper" | "lower" | null,
+  "position": "front" | "rear" | "upper" | "lower" | "both" | null,
   "color": string or null,
   "engine": string or null,
   "option_package": string or null,
@@ -98,6 +98,8 @@ Rules:
   source text states it, even alongside "side". A "front left door" part must have BOTH side="driver" AND
   position="front" — never drop position just because side is also present. If a vehicle has separate
   front and rear parts for the same side, omitting position would let a customer confirm the wrong one.
+  Use position="both" when the listing states the part fits EITHER front or rear (a single interchangeable
+  part, not a pair) — same logic as side="both".
 - "engine" only if a specific engine size/type is required for fitment (e.g. "1.4L Turbo", "6.2L").
 - "option_package" for things like tow package, power windows, folding mirrors — features the vehicle must already have.
 - "other_qualifiers" for anything else fitment-relevant that doesn't fit the above (trim level, generation code, cab style, etc.) — keep it short.
