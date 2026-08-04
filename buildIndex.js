@@ -43,16 +43,35 @@ async function getAccessToken() {
   return data.access_token;
 }
 
-async function shopifyGraphQL(token, query, variables = {}) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function shopifyGraphQL(token, query, variables = {}, retriesLeft = 5) {
   const res = await fetch(`https://${SHOPIFY_STORE}/admin/api/${API_VERSION}/graphql.json`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
     body: JSON.stringify({ query, variables }),
   });
   const json = await res.json();
-  if (json.errors) throw new Error('Shopify GraphQL error: ' + JSON.stringify(json.errors));
+
+  if (json.errors) {
+    const isThrottled = json.errors.some((e) => e.extensions?.code === 'THROTTLED');
+    if (isThrottled && retriesLeft > 0) {
+      const waitMs = 2000 * (6 - retriesLeft); // 2s, 4s, 6s, 8s, 10s
+      console.log(`\nRate limited by Shopify — waiting ${waitMs / 1000}s and retrying (${retriesLeft} retries left)...`);
+      await sleep(waitMs);
+      return shopifyGraphQL(token, query, variables, retriesLeft - 1);
+    }
+    throw new Error('Shopify GraphQL error: ' + JSON.stringify(json.errors));
+  }
   return json.data;
 }
+
+// Small pause between each page fetch — keeps us comfortably under Shopify's
+// rate limit instead of firing requests as fast as possible and relying
+// entirely on the retry logic above to recover after getting throttled.
+const PAGE_FETCH_DELAY_MS = 500;
 
 const PRODUCTS_QUERY = `
   query GetProducts($cursor: String) {
@@ -84,6 +103,7 @@ async function fetchAllProducts(token) {
     hasNextPage = data.products.pageInfo.hasNextPage;
     cursor = data.products.pageInfo.endCursor;
     process.stdout.write(`\rFetched ${products.length} products...`);
+    if (hasNextPage) await sleep(PAGE_FETCH_DELAY_MS);
   }
   console.log('');
   return products;
