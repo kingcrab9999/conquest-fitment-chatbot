@@ -188,13 +188,20 @@ function groupBySimilarity(matches, threshold = 0.45) {
     const signature = tokenSet(normalizeForGrouping(m.title, qualifierValues));
     let placed = false;
     for (const g of groups) {
-      if (jaccardSimilarity(signature, g.signature) >= threshold) {
+      // Complete-linkage: must be similar enough to EVERY existing member of
+      // the group, not just the first one added. Single-linkage let a
+      // generic item (e.g. plain "Door Handle") "bridge" two genuinely
+      // different parts (a trim cover and a full handle assembly) into the
+      // same group just because it happened to overlap with both.
+      const allSimilar = g.signatures.every((sig) => jaccardSimilarity(signature, sig) >= threshold);
+      if (allSimilar) {
         g.items.push(m);
+        g.signatures.push(signature);
         placed = true;
         break;
       }
     }
-    if (!placed) groups.push({ signature, items: [m] });
+    if (!placed) groups.push({ signatures: [signature], items: [m] });
   }
   return groups.map((g) => g.items);
 }
