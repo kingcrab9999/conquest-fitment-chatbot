@@ -53,6 +53,36 @@ app.use((req, res, next) => {
   next();
 });
 
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Turns a messy full title into a short, clean label for a "which type of
+// part is this" question — strips year ranges, the known make/model, and
+// known qualifier values, leaving just the distinguishing part name.
+// e.g. "2017-2022 Ford F-250 F-350 6.2 Transmission Oil Cooler Hose Radiator
+// to Cooler" -> "Transmission Oil Cooler Hose Radiator to Cooler"
+function buildShortLabel(product, criteria) {
+  let t = product.title;
+  t = t.replace(/\b(19|20)\d{2}\s*-\s*(19|20)?\d{2}\b/g, ' ');
+  t = t.replace(/\b(19|20)\d{2}\b/g, ' ');
+  const stripValues = [criteria.make, criteria.model, product.side, product.color, product.engine, product.option_package];
+  for (const v of stripValues) {
+    if (!v) continue;
+    t = t.replace(new RegExp('\\b' + escapeRegex(String(v)) + '\\b', 'gi'), ' ');
+  }
+  // Multi-model listings ("F-250 F-350 F-450...") only get their ONE known
+  // model stripped above — strip any other leftover model-code-shaped
+  // tokens too, generically, rather than just the specific one we knew about.
+  t = t.replace(/\bF-?\d{3}\b/gi, ' ');
+  const noise = ['oem', 'genuine', 'new', 'used', 'driver', 'passenger', 'side', 'left', 'right', 'or', 'and'];
+  for (const w of noise) {
+    t = t.replace(new RegExp('\\b' + w + '\\b', 'gi'), ' ');
+  }
+  t = t.replace(/\s{2,}/g, ' ').replace(/^[\s,]+|[\s,]+$/g, '').trim();
+  return t || product.title;
+}
+
 function trimForDisplay(p) {
   return {
     id: p.id,
@@ -359,10 +389,10 @@ app.post('/api/chat', async (req, res) => {
     if (groups.length > 1) {
       const options = groups.map((g) => g[0]);
       return res.json({
-        reply: `I found a few different parts that could match "${criteria.keyword || message}" — which of these did you mean?`,
+        reply: `A few different parts could match "${criteria.keyword || message}" — which one do you need?`,
         criteria,
         matchCount: matches.length,
-        products: options.map(trimForDisplay),
+        products: options.map((p) => ({ ...trimForDisplay(p), shortLabel: buildShortLabel(p, criteria) })),
         qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
         needsProductSelection: true,
       });
