@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Search Log — Conquest Auto Parts</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 1100px; margin: 30px auto; padding: 0 20px; color: #1a1d21; }
+  h1 { font-size: 20px; }
+  .setup { background: #fdf1ec; border: 2px solid #d94a1f; border-radius: 8px; padding: 14px; margin-bottom: 20px; }
+  .setup input { padding: 8px 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 6px; width: 320px; }
+  .setup button { padding: 8px 14px; font-size: 14px; font-weight: 700; background: #d94a1f; color: #fff; border: none; border-radius: 6px; cursor: pointer; margin-left: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; vertical-align: top; }
+  th { background: #f4f3f1; position: sticky; top: 0; }
+  .outcome { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .outcome-no_match { background: #fde2e2; color: #b53a15; }
+  .outcome-single_match { background: #dff2e6; color: #2f7a52; }
+  .outcome-multiple_matches { background: #eef2fd; color: #3b5bdb; }
+  .outcome-needs_type_selection { background: #fff3d6; color: #a06b00; }
+  .outcome-too_many_matches { background: #fff3d6; color: #a06b00; }
+  .outcome-asked_for_year, .outcome-asked_for_make_model { background: #f0f0ee; color: #5b6472; }
+  .results-list { max-width: 320px; font-size: 12px; color: #4b5563; }
+  #status { color: #5b6472; font-size: 13px; margin: 10px 0; }
+</style>
+</head>
+<body>
+  <h1>🔧 Search Log</h1>
+  <div class="setup">
+    <label>Backend URL: </label>
+    <input id="apiBase" value="https://conquest-fitment-chatbot.onrender.com" />
+    <label style="margin-left:10px;">Admin Secret: </label>
+    <input id="secret" type="password" placeholder="paste your ADMIN_SECRET" />
+    <button onclick="loadLog()">Load</button>
+  </div>
+  <div id="status"></div>
+  <table id="logTable" style="display:none;">
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Query / Criteria</th>
+        <th>Outcome</th>
+        <th>Matches</th>
+        <th>Results shown</th>
+      </tr>
+    </thead>
+    <tbody id="logBody"></tbody>
+  </table>
+
+  <script>
+    async function loadLog() {
+      const apiBase = document.getElementById('apiBase').value.trim();
+      const secret = document.getElementById('secret').value.trim();
+      const status = document.getElementById('status');
+      const table = document.getElementById('logTable');
+      const body = document.getElementById('logBody');
+      status.textContent = 'Loading…';
+      table.style.display = 'none';
+      body.innerHTML = '';
+
+      try {
+        const res = await fetch(`${apiBase}/api/admin/search-log?limit=500`, {
+          headers: { 'x-admin-secret': secret },
+        });
+        if (res.status === 401) {
+          status.textContent = 'Wrong secret — check your ADMIN_SECRET value.';
+          return;
+        }
+        const data = await res.json();
+        status.textContent = `Showing ${data.entries.length} of ${data.total} total logged searches.`;
+
+        data.entries.forEach((e) => {
+          const tr = document.createElement('tr');
+          const time = new Date(e.timestamp).toLocaleString();
+          const criteriaBits = [e.criteria?.year, e.criteria?.make, e.criteria?.model, e.criteria?.keyword]
+            .filter(Boolean).join(' ');
+          const queryText = e.message || criteriaBits || '(narrowing step)';
+          const resultsText = (e.results || []).slice(0, 5).map((r) => r.title).join('; ') ||
+            (e.options || []).slice(0, 5).join('; ') || '—';
+
+          tr.innerHTML = `
+            <td>${time}</td>
+            <td><strong>${queryText}</strong><br><span style="color:#8a8f98">${criteriaBits}</span></td>
+            <td><span class="outcome outcome-${e.outcome}">${(e.outcome || '').replace(/_/g, ' ')}</span></td>
+            <td>${e.matchCount ?? '—'}</td>
+            <td class="results-list">${resultsText}</td>
+          `;
+          body.appendChild(tr);
+        });
+        table.style.display = 'table';
+      } catch (err) {
+        status.textContent = 'Error loading log: ' + err.message;
+      }
+    }
+  </script>
+</body>
+</html>

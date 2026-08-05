@@ -21,6 +21,8 @@
 
 require('dotenv').config();
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const {
   loadIndex,
   upsertProduct,
@@ -33,6 +35,18 @@ const {
   filterByKeyword,
   groupBySimilarity,
 } = require('./fitmentQuery');
+
+const SEARCH_LOG_FILE = path.join(__dirname, 'search-log.jsonl');
+
+// Appends one search event to the log — best-effort, never blocks or fails
+// the actual search if logging has a problem.
+function logSearch(entry) {
+  try {
+    fs.appendFileSync(SEARCH_LOG_FILE, JSON.stringify({ timestamp: new Date().toISOString(), ...entry }) + '\n');
+  } catch (e) {
+    console.error('Search log write failed:', e.message);
+  }
+}
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE || 'parts1.myshopify.com';
@@ -209,6 +223,21 @@ function buildIndexRecord(product) {
   };
 }
 
+app.get('/api/admin/search-log', (req, res) => {
+  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    if (!fs.existsSync(SEARCH_LOG_FILE)) return res.json({ entries: [] });
+    const lines = fs.readFileSync(SEARCH_LOG_FILE, 'utf8').trim().split('\n').filter(Boolean);
+    const limit = Math.min(Number(req.query.limit) || 200, 2000);
+    const entries = lines.slice(-limit).map((line) => JSON.parse(line)).reverse();
+    res.json({ entries, total: lines.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/admin/reindex-product', async (req, res) => {
   try {
     if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
@@ -280,6 +309,14 @@ app.post('/api/match', (req, res) => {
     matches = filterByQualifiers(matches, { side, position, color, engine, option_package });
     if (keyword) matches = filterByKeyword(matches, keyword);
     const displayCriteria = { year: year ? Number(year) : null, make, model };
+    logSearch({
+      message: null,
+      criteria: { year, make, model, side, position, color, engine, option_package, keyword },
+      outcome: matches.length === 0 ? 'no_match' : matches.length === 1 ? 'single_match' : 'multiple_matches',
+      matchCount: matches.length,
+      results: matches.slice(0, 20).map((p) => ({ title: p.title, sku: p.sku })),
+      source: 'match_endpoint',
+    });
     res.json({
       matchCount: matches.length,
       products: matches.slice(0, 20).map((p) => trimForDisplay(p, displayCriteria)),
@@ -367,6 +404,7 @@ app.post('/api/chat', async (req, res) => {
     // every model year at once, which for a lot of parts (like this one)
     // means genuinely different physical parts getting lumped together.
     if (!criteria.year) {
+      logSearch({ message, criteria, outcome: 'asked_for_year', matchCount: null });
       return res.json({
         reply: `What year is your vehicle? I need that first to make sure I find the exact right part — styles and part numbers often change between model years.`,
         criteria,
@@ -380,6 +418,7 @@ app.post('/api/chat', async (req, res) => {
     // all — with no vehicle identified, "matches" would be a huge slice of
     // the whole catalog and the qualifier lists below would be meaningless.
     if (!criteria.make && !criteria.model) {
+      logSearch({ message, criteria, outcome: 'asked_for_make_model', matchCount: null });
       return res.json({
         reply: `What make and model is your ${criteria.year}? That's the last piece I need.`,
         criteria,
@@ -407,6 +446,7 @@ app.post('/api/chat', async (req, res) => {
     // across a huge, mostly-unrelated set of products.
     const MAX_REASONABLE_MATCHES = 25;
     if (matches.length > MAX_REASONABLE_MATCHES) {
+      logSearch({ message, criteria, outcome: 'too_many_matches', matchCount: matches.length });
       return res.json({
         reply: didYouMeanNote + `That matches quite a few parts (${matches.length}) — can you tell me more specifically what part you're looking for, or narrow the model/trim?`,
         criteria,
@@ -427,6 +467,13 @@ app.post('/api/chat', async (req, res) => {
 
     if (groups.length > 1) {
       const options = groups.map((g) => g[0]);
+      logSearch({
+        message,
+        criteria,
+        outcome: 'needs_type_selection',
+        matchCount: matches.length,
+        options: options.map((p) => p.title),
+      });
       return res.json({
         reply: didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`,
         criteria,
@@ -469,6 +516,14 @@ app.post('/api/chat', async (req, res) => {
       reply = `Found ${matches.length} matching options for your vehicle.`;
     }
     reply = didYouMeanNote + reply;
+
+    logSearch({
+      message,
+      criteria,
+      outcome: matches.length === 0 ? 'no_match' : matches.length === 1 ? 'single_match' : 'multiple_matches',
+      matchCount: matches.length,
+      results: matches.slice(0, 20).map((p) => ({ title: p.title, sku: p.sku })),
+    });
 
     res.json({
       reply,
