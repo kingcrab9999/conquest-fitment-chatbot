@@ -254,12 +254,14 @@ app.get('/api/qualifiers', (req, res) => {
 
 app.post('/api/match', (req, res) => {
   try {
-    const { year, make, model, side, color, engine, option_package } = req.body || {};
+    const { year, make, model, side, position, color, engine, option_package, keyword } = req.body || {};
     let matches = getMatches(year ? Number(year) : null, make, model);
-    matches = filterByQualifiers(matches, { side, color, engine, option_package });
+    matches = filterByQualifiers(matches, { side, position, color, engine, option_package });
+    if (keyword) matches = filterByKeyword(matches, keyword);
     res.json({
       matchCount: matches.length,
       products: matches.slice(0, 20).map(trimForDisplay),
+      qualifiers: getQualifierOptions(matches),
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
