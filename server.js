@@ -302,12 +302,25 @@ app.post('/api/chat', async (req, res) => {
 
     const criteria = await parseCriteriaFromMessage(message, context);
 
+    // Year is required before anything else — without it, "matches" spans
+    // every model year at once, which for a lot of parts (like this one)
+    // means genuinely different physical parts getting lumped together.
+    if (!criteria.year) {
+      return res.json({
+        reply: `What year is your vehicle? I need that first to make sure I find the exact right part — styles and part numbers often change between model years.`,
+        criteria,
+        matchCount: null,
+        products: [],
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+      });
+    }
+
     // If we don't have at least a make or a model, don't attempt matching at
     // all — with no vehicle identified, "matches" would be a huge slice of
     // the whole catalog and the qualifier lists below would be meaningless.
     if (!criteria.make && !criteria.model) {
       return res.json({
-        reply: `What vehicle is this for? Give me at least the make and model (year helps too) and I can narrow it down.`,
+        reply: `What make and model is your ${criteria.year}? That's the last piece I need.`,
         criteria,
         matchCount: null,
         products: [],
