@@ -289,7 +289,8 @@ Given their message and any already-known criteria, output ONLY a JSON object (n
   "color": string or null,
   "engine": string or null,
   "option_package": string or null,
-  "keyword": string or null
+  "keyword": string or null,
+  "keyword_corrected_from": string or null
 }
 
 Rules:
@@ -300,6 +301,12 @@ Rules:
   "tail light") — extract this whenever the message names or describes a part, even if it also
   contains vehicle info. Carry it forward from already-known criteria too, unless the new message
   is clearly asking about a different part.
+- If the part name looks like a likely TYPO of a real, common automotive part term, correct it and
+  put the corrected version in "keyword" — e.g. "bumper gap" is almost certainly "bumper cap",
+  "brake pads" mistyped as "break pads" should become "brake pads". When you make this kind of
+  correction, put the customer's ORIGINAL wording in "keyword_corrected_from"; otherwise leave
+  "keyword_corrected_from" as null. Only correct genuine likely typos — never "correct" a word that
+  could plausibly be a real, different part on its own.
 - Respond with the JSON object only.`;
 
 async function parseCriteriaFromMessage(message, knownCriteria) {
@@ -364,6 +371,14 @@ app.post('/api/chat', async (req, res) => {
     matches = filterByQualifiers(matches, criteria);
     matches = filterByKeyword(matches, criteria.keyword);
 
+    // Surface any typo correction the AI made to the keyword, so the
+    // customer sees it was auto-corrected rather than silently guessed —
+    // or silently failing if the typo had been left uncorrected.
+    const didYouMeanNote =
+      criteria.keyword_corrected_from && criteria.keyword && criteria.keyword_corrected_from.toLowerCase() !== criteria.keyword.toLowerCase()
+        ? `Did you mean "${criteria.keyword}"? `
+        : '';
+
     // Guard rail: if the match set is still huge, the customer's vehicle
     // isn't actually narrowed down yet (e.g. make matched but not model) —
     // ask for more identifying info instead of computing/listing qualifiers
@@ -371,7 +386,7 @@ app.post('/api/chat', async (req, res) => {
     const MAX_REASONABLE_MATCHES = 25;
     if (matches.length > MAX_REASONABLE_MATCHES) {
       return res.json({
-        reply: `That matches quite a few parts (${matches.length}) — can you tell me more specifically what part you're looking for, or narrow the model/trim?`,
+        reply: didYouMeanNote + `That matches quite a few parts (${matches.length}) — can you tell me more specifically what part you're looking for, or narrow the model/trim?`,
         criteria,
         matchCount: matches.length,
         products: [],
@@ -391,7 +406,7 @@ app.post('/api/chat', async (req, res) => {
     if (groups.length > 1) {
       const options = groups.map((g) => g[0]);
       return res.json({
-        reply: `A few different parts could match "${criteria.keyword || message}" — which one do you need?`,
+        reply: didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`,
         criteria,
         matchCount: matches.length,
         products: options.map((p) => ({ ...trimForDisplay(p), shortLabel: buildShortLabel(p, criteria) })),
@@ -431,6 +446,7 @@ app.post('/api/chat', async (req, res) => {
     } else {
       reply = `Found ${matches.length} matching options for your vehicle.`;
     }
+    reply = didYouMeanNote + reply;
 
     res.json({
       reply,
