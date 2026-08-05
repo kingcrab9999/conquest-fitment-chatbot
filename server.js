@@ -71,10 +71,17 @@ function buildShortLabel(product, criteria) {
     if (!v) continue;
     t = t.replace(new RegExp('\\b' + escapeRegex(String(v)) + '\\b', 'gi'), ' ');
   }
-  // Multi-model listings ("F-250 F-350 F-450...") only get their ONE known
-  // model stripped above — strip any other leftover model-code-shaped
-  // tokens too, generically, rather than just the specific one we knew about.
-  t = t.replace(/\bF-?\d{3}\b/gi, ' ');
+  // Multi-model listings ("F-250 F-350 F-450 Maverick...") only get their ONE
+  // known model stripped above — strip every OTHER model this product is
+  // tagged with too, using its own models list, so any brand/name works
+  // generically rather than just F-code patterns.
+  if (Array.isArray(product.models)) {
+    for (const m of product.models) {
+      if (!m) continue;
+      t = t.replace(new RegExp('\\b' + escapeRegex(String(m)) + '\\b', 'gi'), ' ');
+    }
+  }
+  t = t.replace(/\bF-?\d{3}\b/gi, ' '); // catch any leftover model-code-shaped tokens
   const noise = ['oem', 'genuine', 'new', 'used', 'driver', 'passenger', 'side', 'left', 'right', 'or', 'and'];
   for (const w of noise) {
     t = t.replace(new RegExp('\\b' + w + '\\b', 'gi'), ' ');
@@ -83,11 +90,25 @@ function buildShortLabel(product, criteria) {
   return t || product.title;
 }
 
-function trimForDisplay(p) {
+// Builds a clean display title scoped to what the customer actually
+// searched for — e.g. "2021 Ford F-150 — Sliding Rear Window Switch" instead
+// of the raw "2021-2025 Ford F-150 F-250 F-350 Maverick Sliding Rear Window
+// Switch...". The part may genuinely fit all those vehicles (that's accurate
+// and stays true on the product page), but a customer searching specifically
+// for their F-150 shouldn't see other vehicles cluttering the result list.
+function buildDisplayTitle(product, criteria) {
+  const vehicleParts = [criteria?.year, criteria?.make, criteria?.model].filter(Boolean);
+  if (vehicleParts.length === 0) return product.title;
+  const cleanPart = buildShortLabel(product, criteria);
+  return `${vehicleParts.join(' ')} — ${cleanPart}`;
+}
+
+function trimForDisplay(p, criteria) {
   return {
     id: p.id,
     handle: p.handle,
     title: p.title,
+    displayTitle: criteria ? buildDisplayTitle(p, criteria) : p.title,
     image: p.image,
     sku: p.sku,
     price: p.price,
@@ -258,9 +279,10 @@ app.post('/api/match', (req, res) => {
     let matches = getMatches(year ? Number(year) : null, make, model);
     matches = filterByQualifiers(matches, { side, position, color, engine, option_package });
     if (keyword) matches = filterByKeyword(matches, keyword);
+    const displayCriteria = { year: year ? Number(year) : null, make, model };
     res.json({
       matchCount: matches.length,
-      products: matches.slice(0, 20).map(trimForDisplay),
+      products: matches.slice(0, 20).map((p) => trimForDisplay(p, displayCriteria)),
       qualifiers: getQualifierOptions(matches),
     });
   } catch (e) {
@@ -409,7 +431,7 @@ app.post('/api/chat', async (req, res) => {
         reply: didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`,
         criteria,
         matchCount: matches.length,
-        products: options.map((p) => ({ ...trimForDisplay(p), shortLabel: buildShortLabel(p, criteria) })),
+        products: options.map((p) => ({ ...trimForDisplay(p, criteria), shortLabel: buildShortLabel(p, criteria) })),
         qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
         needsProductSelection: true,
       });
@@ -452,7 +474,7 @@ app.post('/api/chat', async (req, res) => {
       reply,
       criteria,
       matchCount: matches.length,
-      products: matches.slice(0, 20).map(trimForDisplay),
+      products: matches.slice(0, 20).map((p) => trimForDisplay(p, criteria)),
       qualifiers,
     });
   } catch (e) {
