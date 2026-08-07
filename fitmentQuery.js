@@ -159,7 +159,12 @@ function filterByKeyword(matches, keyword) {
   return matches.filter((p) => {
     const titleWords = p.title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
     return words.every((w) => {
-      const maxDist = w.length <= 4 ? 1 : 2; // stricter tolerance for short words
+      // Distance 1 only, regardless of word length — the old length-based
+      // bump to 2 was too loose and matched unrelated words like "brake"
+      // vs "bracket" (genuinely 2 edits apart, but not a typo of each
+      // other). Distance 1 still catches real single-letter typos like
+      // "huse" -> "hose".
+      const maxDist = 1;
       return titleWords.some((tw) => levenshtein(w, tw) <= maxDist);
     });
   });

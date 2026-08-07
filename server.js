@@ -547,6 +547,22 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
+    // Check this decisively, before any matching runs — a fuzzy/loose match
+    // on some unrelated product (e.g. a "brake CLUTCH PEDAL pad" technically
+    // containing both words) shouldn't be able to mask this message. If the
+    // customer is asking for a common maintenance item, that's the answer
+    // regardless of what a keyword search might loosely turn up.
+    if (isCommonMaintenancePart(criteria.keyword)) {
+      logSearch({ message, criteria, outcome: 'common_maintenance_item', matchCount: 0 });
+      return res.json({
+        reply: `We specialize in OEM specialty parts, not common maintenance items — for "${criteria.keyword}" you'll want a local chain auto parts store like AutoZone or O'Reilly's. Happy to help you find something more specialized though!`,
+        criteria,
+        matchCount: 0,
+        products: [],
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+      });
+    }
+
     let matches = getMatches(criteria.year, criteria.make, criteria.model);
     matches = filterByQualifiers(matches, criteria);
     matches = filterByKeyword(matches, criteria.keyword);
@@ -621,9 +637,7 @@ app.post('/api/chat', async (req, res) => {
 
     let reply;
     if (matches.length === 0) {
-      if (isCommonMaintenancePart(criteria.keyword)) {
-        reply = `We specialize in OEM specialty parts, not common maintenance items — for "${criteria.keyword}" you'll want a local chain auto parts store like AutoZone or O'Reilly's. Happy to help you find something more specialized though!`;
-      } else if (!isKnownPartType(criteria.keyword)) {
+      if (!isKnownPartType(criteria.keyword)) {
         const suggestions = suggestVocabularyTerms(criteria.keyword);
         const suggestionText = suggestions.length ? ` Did you mean: ${suggestions.join(', ')}?` : '';
         reply = `We don't currently carry "${criteria.keyword}" — sorry about that!${suggestionText} Feel free to <a href="/pages/contact-us">contact us</a> if you'd like us to try to source it, or check back later as our inventory grows.`;
