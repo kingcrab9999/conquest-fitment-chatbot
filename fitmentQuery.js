@@ -265,11 +265,39 @@ function findBySku(query) {
   return index.products.find((p) => normalizeSku(p.sku) === target) || null;
 }
 
+// When a search term isn't in the vocabulary at all, suggest the closest
+// real words from the catalog instead of just saying "not found" — reuses
+// the same edit-distance function as the keyword fuzzy-match fallback.
+function suggestVocabularyTerms(keyword, maxSuggestions = 3) {
+  if (!keyword) return [];
+  const index = loadIndex();
+  const vocab = index.vocabulary || [];
+  const words = keyword.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length >= 3);
+  const scored = [];
+  for (const w of words) {
+    for (const v of vocab) {
+      const dist = levenshtein(w, v);
+      if (dist > 0 && dist <= 3) scored.push({ term: v, dist });
+    }
+  }
+  scored.sort((a, b) => a.dist - b.dist);
+  const seen = new Set();
+  const results = [];
+  for (const s of scored) {
+    if (seen.has(s.term)) continue;
+    seen.add(s.term);
+    results.push(s.term);
+    if (results.length >= maxSuggestions) break;
+  }
+  return results;
+}
+
 module.exports = {
   loadIndex,
   upsertProduct,
   isKnownPartType,
   findBySku,
+  suggestVocabularyTerms,
   getYears,
   getMakes,
   getModels,

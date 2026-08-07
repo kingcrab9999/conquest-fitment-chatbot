@@ -85,7 +85,7 @@ const PRODUCTS_QUERY = `
           featuredImage { url }
           fitmentData: metafield(namespace: "fitment", key: "data") { value }
           variants(first: 5) {
-            edges { node { id sku price } }
+            edges { node { id sku price inventoryQuantity } }
           }
         }
       }
@@ -131,6 +131,7 @@ function buildRecord(product) {
     sku: variant.sku,
     price: variant.price,
     variantId,
+    inventory: typeof variant.inventoryQuantity === 'number' ? variant.inventoryQuantity : null,
     year_start: fitment.year_start ?? null,
     year_end: fitment.year_end ?? (fitment.year_start ?? null),
     makes: (fitment.makes || []).map((m) => m.toLowerCase()),

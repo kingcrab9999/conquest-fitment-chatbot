@@ -28,6 +28,7 @@ const {
   upsertProduct,
   isKnownPartType,
   findBySku,
+  suggestVocabularyTerms,
   getYears,
   getMakes,
   getModels,
@@ -158,6 +159,7 @@ function trimForDisplay(p, criteria) {
     sku: p.sku,
     price: p.price,
     variantId: p.variantId,
+    inStock: p.inventory == null ? null : p.inventory > 0,
     side: p.side,
     position: p.position,
     color: p.color,
@@ -206,7 +208,7 @@ async function fetchSingleProduct(productId) {
           title
           featuredImage { url }
           fitmentData: metafield(namespace: "fitment", key: "data") { value }
-          variants(first: 5) { edges { node { id sku price } } }
+          variants(first: 5) { edges { node { id sku price inventoryQuantity } } }
         }
       }`,
       variables: { id: productId },
@@ -241,6 +243,7 @@ function buildIndexRecord(product) {
     sku: variant.sku,
     price: variant.price,
     variantId,
+    inventory: typeof variant.inventoryQuantity === 'number' ? variant.inventoryQuantity : null,
     year_start: fitment.year_start ?? null,
     year_end: fitment.year_end ?? (fitment.year_start ?? null),
     makes: (fitment.makes || []).map((m) => m.toLowerCase()),
@@ -367,6 +370,35 @@ app.post('/api/match', (req, res) => {
 // answer; it can only mis-parse the sentence (worst case: asks for
 // clarification instead of guessing).
 
+// VINs are always exactly 17 characters, and never contain I, O, or Q
+// (excluded by the standard to avoid confusion with 1/0). This is enough to
+// reliably tell a VIN apart from an ordinary search phrase or part number.
+function looksLikeVin(text) {
+  const t = text.trim().toUpperCase();
+  return /^[A-HJ-NPR-Z0-9]{17}$/.test(t);
+}
+
+// NHTSA's public VIN decoder — free, no API key required. Returns the
+// factory-exact year/make/model/engine, which resolves a lot of ambiguity
+// in one shot compared to asking the customer to pick each field manually.
+async function decodeVin(vin) {
+  const res = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/${vin}?format=json`);
+  if (!res.ok) throw new Error(`VIN decode failed: ${res.status}`);
+  const data = await res.json();
+  const r = data.Results?.[0];
+  if (!r || !r.Make) return null;
+
+  const engineParts = [r.DisplacementL && `${parseFloat(r.DisplacementL).toFixed(1)}L`, r.EngineCylinders && `${r.EngineCylinders}-cyl`, r.FuelTypePrimary]
+    .filter(Boolean);
+
+  return {
+    year: r.ModelYear ? Number(r.ModelYear) : null,
+    make: r.Make,
+    model: r.Model,
+    engine: engineParts.length ? engineParts.join(' ') : null,
+  };
+}
+
 const PARSE_SYSTEM_PROMPT = `You extract vehicle fitment search criteria from a customer's message about an auto part.
 Given their message and any already-known criteria, output ONLY a JSON object (no markdown, no preamble):
 
@@ -391,6 +423,11 @@ Rules:
   "tail light") — extract this whenever the message names or describes a part, even if it also
   contains vehicle info. Carry it forward from already-known criteria too, unless the new message
   is clearly asking about a different part.
+- Normalize common slang/casual terms to the standard part name customers' listings would actually
+  use — e.g. "blinker" -> "turn signal", "check engine light sensor" -> "oxygen sensor", "AC
+  compressor" stays as-is (already standard), "gas cap" -> "fuel cap" only if that's clearly meant.
+  Use your general automotive knowledge for this; don't force a mapping if the casual term is
+  already a real, searchable part name on its own.
 - If the part name looks like a likely TYPO of a real, common automotive part term, correct it and
   put the corrected version in "keyword" — e.g. "bumper gap" is almost certainly "bumper cap",
   "brake pads" mistyped as "break pads" should become "brake pads". When you make this kind of
@@ -443,7 +480,21 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    const criteria = await parseCriteriaFromMessage(message, context);
+    let criteria = null;
+    if (looksLikeVin(message)) {
+      try {
+        const decoded = await decodeVin(message.trim());
+        if (decoded && decoded.make && decoded.model) {
+          criteria = { ...context, ...decoded };
+        }
+      } catch (e) {
+        console.error('VIN decode failed:', e.message);
+        // falls through to normal AI parsing below
+      }
+    }
+    if (!criteria) {
+      criteria = await parseCriteriaFromMessage(message, context);
+    }
 
     // Year is required before anything else — without it, "matches" spans
     // every model year at once, which for a lot of parts (like this one)
@@ -550,7 +601,9 @@ app.post('/api/chat', async (req, res) => {
       if (isCommonMaintenancePart(criteria.keyword)) {
         reply = `We specialize in OEM specialty parts, not common maintenance items — for "${criteria.keyword}" you'll want a local chain auto parts store like AutoZone or O'Reilly's. Happy to help you find something more specialized though!`;
       } else if (!isKnownPartType(criteria.keyword)) {
-        reply = `We don't currently carry "${criteria.keyword}" — sorry about that! Feel free to <a href="/pages/contact-us">contact us</a> if you'd like us to try to source it, or check back later as our inventory grows.`;
+        const suggestions = suggestVocabularyTerms(criteria.keyword);
+        const suggestionText = suggestions.length ? ` Did you mean: ${suggestions.join(', ')}?` : '';
+        reply = `We don't currently carry "${criteria.keyword}" — sorry about that!${suggestionText} Feel free to <a href="/pages/contact-us">contact us</a> if you'd like us to try to source it, or check back later as our inventory grows.`;
       } else {
         reply = `We carry that type of part, but not for your specific ${criteria.year} ${criteria.make} ${criteria.model} — could you double check the year, make, and model? One of the details (like engine or side) might also not match what's in stock.`;
       }
