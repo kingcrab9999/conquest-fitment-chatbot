@@ -47,9 +47,19 @@
   </table>
 
   <script>
+    // Remember these locally so you don't have to re-type them every time —
+    // this file lives on your own machine, so it's just this browser's storage.
+    const savedBase = localStorage.getItem('cap-log-apiBase');
+    const savedSecret = localStorage.getItem('cap-log-secret');
+    if (savedBase) document.getElementById('apiBase').value = savedBase;
+    if (savedSecret) document.getElementById('secret').value = savedSecret;
+
     async function loadLog() {
       const apiBase = document.getElementById('apiBase').value.trim();
       const secret = document.getElementById('secret').value.trim();
+      localStorage.setItem('cap-log-apiBase', apiBase);
+      localStorage.setItem('cap-log-secret', secret);
+
       const status = document.getElementById('status');
       const table = document.getElementById('logTable');
       const body = document.getElementById('logBody');
@@ -91,6 +101,9 @@
         status.textContent = 'Error loading log: ' + err.message;
       }
     }
+
+    // Auto-load immediately if we already have a saved secret from last time.
+    if (savedSecret) loadLog();
   </script>
 </body>
 </html>

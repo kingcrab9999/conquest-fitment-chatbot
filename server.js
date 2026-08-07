@@ -26,6 +26,8 @@ const path = require('path');
 const {
   loadIndex,
   upsertProduct,
+  isKnownPartType,
+  findBySku,
   getYears,
   getMakes,
   getModels,
@@ -398,6 +400,20 @@ app.post('/api/chat', async (req, res) => {
     if (!message) return res.status(400).json({ error: 'message is required' });
     if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: 'Chat is not configured (missing ANTHROPIC_API_KEY)' });
 
+    // Fast-path: if this looks like a part number/SKU, skip the AI entirely —
+    // a SKU already uniquely identifies the exact part, no vehicle needed.
+    const skuMatch = findBySku(message);
+    if (skuMatch) {
+      logSearch({ message, criteria: {}, outcome: 'sku_direct_match', matchCount: 1, results: [{ title: skuMatch.title, sku: skuMatch.sku }] });
+      return res.json({
+        reply: `Found it — part number ${skuMatch.sku}.`,
+        criteria: {},
+        matchCount: 1,
+        products: [trimForDisplay(skuMatch, {})],
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+      });
+    }
+
     const criteria = await parseCriteriaFromMessage(message, context);
 
     // Year is required before anything else — without it, "matches" spans
@@ -502,7 +518,11 @@ app.post('/api/chat', async (req, res) => {
 
     let reply;
     if (matches.length === 0) {
-      reply = `I couldn't find a match for that — could you double check the year, make, and model? Or one of the details (like engine or side) might not match what's in stock.`;
+      if (!isKnownPartType(criteria.keyword)) {
+        reply = `We don't currently carry "${criteria.keyword}" — sorry about that! Feel free to <a href="/pages/contact-us">contact us</a> if you'd like us to try to source it, or check back later as our inventory grows.`;
+      } else {
+        reply = `We carry that type of part, but not for your specific ${criteria.year} ${criteria.make} ${criteria.model} — could you double check the year, make, and model? One of the details (like engine or side) might also not match what's in stock.`;
+      }
     } else if (stillAmbiguous) {
       const asks = [];
       if (qualifiers.side.length > 1) asks.push(`which side (${formatList(qualifiers.side)})`);

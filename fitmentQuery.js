@@ -127,12 +127,41 @@ function filterByQualifiers(matches, answers = {}) {
 // substring match against the title — good enough since titles are
 // consistently descriptive in this catalog, and this only runs on a set
 // already narrowed by year/make/model, not the whole 13k-product catalog.
+// Standard edit-distance calculation — used to catch typos the AI parser
+// might not have corrected (e.g. "huse" vs "hose", one substitution away).
+function levenshtein(a, b) {
+  const m = a.length;
+  const n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
 function filterByKeyword(matches, keyword) {
   if (!keyword) return matches;
   const words = keyword.toLowerCase().split(/\s+/).filter(Boolean);
-  return matches.filter((p) => {
+
+  const exact = matches.filter((p) => {
     const title = p.title.toLowerCase();
     return words.every((w) => title.includes(w));
+  });
+  if (exact.length > 0) return exact;
+
+  // Nothing matched exactly — the AI's typo correction may have missed this
+  // one. Retry with fuzzy word-level matching (small edit distance) before
+  // giving up, so a typo alone doesn't produce a false "not found."
+  return matches.filter((p) => {
+    const titleWords = p.title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    return words.every((w) => {
+      const maxDist = w.length <= 4 ? 1 : 2; // stricter tolerance for short words
+      return titleWords.some((tw) => levenshtein(w, tw) <= maxDist);
+    });
   });
 }
 
@@ -206,9 +235,22 @@ function groupBySimilarity(matches, threshold = 0.45) {
   return groups.map((g) => g.items);
 }
 
+// Checks whether ANY word in the given keyword appears anywhere in the
+// catalog-wide vocabulary — used to tell "we just don't carry this part at
+// all" apart from "we carry it, but not for this specific vehicle."
+function isKnownPartType(keyword) {
+  if (!keyword) return true; // no keyword given — not a "we don't carry it" situation
+  const index = loadIndex();
+  const vocab = new Set(index.vocabulary || []);
+  const words = keyword.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length >= 3);
+  if (words.length === 0) return true;
+  return words.some((w) => vocab.has(w));
+}
+
 module.exports = {
   loadIndex,
   upsertProduct,
+  isKnownPartType,
   getYears,
   getMakes,
   getModels,

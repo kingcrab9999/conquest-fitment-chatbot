@@ -144,6 +144,34 @@ function buildRecord(product) {
   };
 }
 
+// Common English/filler words to exclude from the part-name vocabulary —
+// keeping these would make almost every search look like a vocabulary hit.
+const STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'for', 'with', 'without', 'w', 'wo', 'to', 'of', 'in', 'on', 'new',
+  'genuine', 'oem', 'used', 'left', 'right', 'front', 'rear', 'upper', 'lower', 'side', 'driver',
+  'passenger', 'both', 'set', 'pair', 'kit', 'assembly', 'only', 'from', 'fits', 'fit',
+]);
+
+// Builds the set of distinct real words that appear anywhere in your catalog's
+// titles (after stripping years and known vehicle names) — this is what lets
+// the chatbot distinguish "we don't carry this part at all" from "we carry it,
+// just not for that vehicle."
+function buildVocabulary(records) {
+  const words = new Set();
+  for (const r of records) {
+    let t = r.title.toLowerCase();
+    t = t.replace(/\b(19|20)\d{2}\s*-\s*(19|20)?\d{2}\b/g, ' ');
+    t = t.replace(/\b(19|20)\d{2}\b/g, ' ');
+    for (const m of r.makes) t = t.split(m).join(' ');
+    for (const m of r.models) t = t.split(m).join(' ');
+    t = t.replace(/[^a-z0-9\s]/g, ' ');
+    for (const w of t.split(/\s+/)) {
+      if (w.length >= 3 && !STOPWORDS.has(w) && !/^\d+$/.test(w)) words.add(w);
+    }
+  }
+  return Array.from(words);
+}
+
 async function main() {
   console.log('Authenticating with Shopify...');
   const token = await getAccessToken();
@@ -154,14 +182,18 @@ async function main() {
   const records = rawProducts.map(buildRecord).filter(Boolean);
   const skipped = rawProducts.length - records.length;
 
+  const vocabulary = buildVocabulary(records);
+
   const index = {
     builtAt: new Date().toISOString(),
     productCount: records.length,
     products: records,
+    vocabulary,
   };
 
   fs.writeFileSync(OUTPUT_FILE, JSON.stringify(index));
   console.log(`\nIndex built: ${records.length} products indexed, ${skipped} skipped (no fitment data or no variant).`);
+  console.log(`Vocabulary: ${vocabulary.length} distinct part-related words captured.`);
   console.log(`Written to ${OUTPUT_FILE}`);
 }
 
