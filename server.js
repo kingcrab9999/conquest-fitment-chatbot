@@ -1,5 +1,7 @@
 /**
  * server.js (fitment-chatbot)
+ * BUILD MARKER: v2026-08-07-sku-fix (if you see this comment in the file
+ * on your Mac, the update landed correctly — check for it before pushing)
  *
  * Standalone backend for the "fitment finder" chat widget. Separate from
  * your importer's server.js — this one serves customers on the live site,
