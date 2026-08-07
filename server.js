@@ -259,6 +259,27 @@ function buildIndexRecord(product) {
   };
 }
 
+app.get('/api/admin/debug-index', (req, res) => {
+  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const index = loadIndex();
+    const testSku = req.query.sku || '68020021AA';
+    const found = findBySku(testSku);
+    res.json({
+      productCount: index.productCount,
+      builtAt: index.builtAt,
+      vocabularyCount: (index.vocabulary || []).length,
+      testSku,
+      testSkuFound: !!found,
+      testSkuProductTitle: found ? found.title : null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/admin/search-log', (req, res) => {
   if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
