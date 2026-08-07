@@ -119,6 +119,35 @@ function buildDisplayTitle(product, criteria) {
   return `${vehicleParts.join(' ')} — ${cleanPart}`;
 }
 
+// Common maintenance/commodity items available at any chain auto parts store
+// (AutoZone, O'Reilly, etc.) — Conquest specializes in OEM specialty parts
+// and doesn't carry these, so a zero-match search for one of these gets a
+// different, more helpful explanation than a genuine catalog gap does.
+const COMMON_MAINTENANCE_PARTS = [
+  'air filter', 'cabin air filter', 'cabin filter', 'engine air filter',
+  'fuel filter', 'oil filter',
+  'motor oil', 'engine oil', 'oil', 'synthetic oil',
+  'spark plug', 'spark plugs',
+  'brake pad', 'brake pads', 'brake rotor', 'brake rotors', 'rotors',
+  'alternator', 'starter', 'battery', 'car battery',
+  'wiper blade', 'wiper blades', 'windshield wipers',
+  'serpentine belt', 'timing belt', 'drive belt', 'fan belt',
+  'coolant', 'antifreeze', 'transmission fluid', 'brake fluid', 'power steering fluid',
+  'tire', 'tires',
+  'headlight bulb', 'tail light bulb', 'light bulb', 'bulbs',
+  'floor mats', 'air freshener',
+];
+
+// Uses exact phrase matching (not substring) — a longer, specific keyword
+// like "seat belt buckle" should NOT match "belt" just because it contains
+// that word; only a keyword that essentially IS one of these common items
+// should trigger the chain-store explanation.
+function isCommonMaintenancePart(keyword) {
+  if (!keyword) return false;
+  const k = keyword.toLowerCase().trim().replace(/\s+/g, ' ');
+  return COMMON_MAINTENANCE_PARTS.includes(k);
+}
+
 function trimForDisplay(p, criteria) {
   return {
     id: p.id,
@@ -518,7 +547,9 @@ app.post('/api/chat', async (req, res) => {
 
     let reply;
     if (matches.length === 0) {
-      if (!isKnownPartType(criteria.keyword)) {
+      if (isCommonMaintenancePart(criteria.keyword)) {
+        reply = `We specialize in OEM specialty parts, not common maintenance items — for "${criteria.keyword}" you'll want a local chain auto parts store like AutoZone or O'Reilly's. Happy to help you find something more specialized though!`;
+      } else if (!isKnownPartType(criteria.keyword)) {
         reply = `We don't currently carry "${criteria.keyword}" — sorry about that! Feel free to <a href="/pages/contact-us">contact us</a> if you'd like us to try to source it, or check back later as our inventory grows.`;
       } else {
         reply = `We carry that type of part, but not for your specific ${criteria.year} ${criteria.make} ${criteria.model} — could you double check the year, make, and model? One of the details (like engine or side) might also not match what's in stock.`;
