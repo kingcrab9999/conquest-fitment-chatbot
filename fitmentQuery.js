@@ -247,10 +247,29 @@ function isKnownPartType(keyword) {
   return words.some((w) => vocab.has(w));
 }
 
+// Strips everything but letters/numbers and uppercases, so "HC3Z-7890-A",
+// "hc3z7890a", and "HC3Z 7890 A" all compare equal — customers won't always
+// type a part number with the exact dashes/spacing it's stored with.
+function normalizeSku(s) {
+  return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+// Direct part-number/SKU lookup — checked before any AI parsing, since a
+// SKU already uniquely identifies the exact part and needs no vehicle info
+// at all. Requires at least 5 alphanumeric characters to avoid false
+// positives on short, ordinary search words.
+function findBySku(query) {
+  const target = normalizeSku(query);
+  if (target.length < 5) return null;
+  const index = loadIndex();
+  return index.products.find((p) => normalizeSku(p.sku) === target) || null;
+}
+
 module.exports = {
   loadIndex,
   upsertProduct,
   isKnownPartType,
+  findBySku,
   getYears,
   getMakes,
   getModels,
