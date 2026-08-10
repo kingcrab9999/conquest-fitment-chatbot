@@ -81,10 +81,55 @@ function getModels(year, make) {
   return Array.from(models).sort();
 }
 
+function getAllKnownMakes() {
+  const index = loadIndex();
+  const set = new Set();
+  for (const p of index.products) for (const m of p.makes) set.add(m);
+  return Array.from(set);
+}
+
+function getAllKnownModels() {
+  const index = loadIndex();
+  const set = new Set();
+  for (const p of index.products) for (const m of p.models) set.add(m);
+  return Array.from(set);
+}
+
+// Corrects a typo'd make/model to the closest real one in the catalog —
+// e.g. "explore" -> "Explorer". Only used when there's no exact match at
+// all; a genuinely different (but valid) vehicle name should never get
+// silently rewritten into a similar-looking one.
+function fuzzyCorrectVehicleName(input, knownList, maxDist = 2) {
+  if (!input) return input;
+  const key = normalizeKey(input);
+  if (knownList.some((k) => normalizeKey(k) === key)) return input; // exact match already
+  let best = null;
+  let bestDist = Infinity;
+  for (const k of knownList) {
+    const d = levenshtein(key, normalizeKey(k));
+    if (d < bestDist) {
+      bestDist = d;
+      best = k;
+    }
+  }
+  return best && bestDist <= maxDist ? best : input;
+}
+
+// Whether this make exists anywhere in the catalog at all (after attempting
+// typo correction) — used to give an honest "we don't carry that vehicle
+// type" answer instead of a generic no-match.
+function isKnownMake(make) {
+  if (!make) return true;
+  const corrected = fuzzyCorrectVehicleName(make, getAllKnownMakes());
+  return getAllKnownMakes().some((m) => normalizeKey(m) === normalizeKey(corrected));
+}
+
 function getMatches(year, make, model) {
   const index = loadIndex();
-  const makeKey = normalizeKey(make);
-  const modelKey = normalizeKey(model);
+  const correctedMake = make ? fuzzyCorrectVehicleName(make, getAllKnownMakes()) : make;
+  const correctedModel = model ? fuzzyCorrectVehicleName(model, getAllKnownModels()) : model;
+  const makeKey = normalizeKey(correctedMake);
+  const modelKey = normalizeKey(correctedModel);
   return index.products.filter((p) => {
     if (!coversYear(p, year)) return false;
     if (makeKey && !p.makes.some((m) => normalizeKey(m) === makeKey)) return false;
@@ -301,6 +346,7 @@ module.exports = {
   loadIndex,
   upsertProduct,
   isKnownPartType,
+  isKnownMake,
   findBySku,
   suggestVocabularyTerms,
   getYears,

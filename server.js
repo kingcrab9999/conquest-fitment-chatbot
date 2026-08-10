@@ -29,6 +29,7 @@ const {
   loadIndex,
   upsertProduct,
   isKnownPartType,
+  isKnownMake,
   findBySku,
   suggestVocabularyTerms,
   getYears,
@@ -394,11 +395,13 @@ app.post('/api/match', (req, res) => {
 // clarification instead of guessing).
 
 // VINs are always exactly 17 characters, and never contain I, O, or Q
-// (excluded by the standard to avoid confusion with 1/0). This is enough to
-// reliably tell a VIN apart from an ordinary search phrase or part number.
-function looksLikeVin(text) {
-  const t = text.trim().toUpperCase();
-  return /^[A-HJ-NPR-Z0-9]{17}$/.test(t);
+// (excluded by the standard to avoid confusion with 1/0). Looks for one
+// anywhere in the message rather than requiring the whole message to be
+// exactly a VIN — customers often prefix it ("VIN: ...") or add extra text.
+function extractVin(text) {
+  const cleaned = text.replace(/\bvin\b[:#]?\s*/i, '');
+  const match = cleaned.match(/\b[A-HJ-NPR-Z0-9]{17}\b/);
+  return match ? match[0] : null;
 }
 
 // NHTSA's public VIN decoder — free, no API key required. Returns the
@@ -504,9 +507,10 @@ app.post('/api/chat', async (req, res) => {
     }
 
     let criteria = null;
-    if (looksLikeVin(message)) {
+    const vinCandidate = extractVin(message);
+    if (vinCandidate) {
       try {
-        const decoded = await decodeVin(message.trim());
+        const decoded = await decodeVin(vinCandidate);
         if (decoded && decoded.make && decoded.model) {
           criteria = { ...context, ...decoded };
         }
@@ -517,6 +521,21 @@ app.post('/api/chat', async (req, res) => {
     }
     if (!criteria) {
       criteria = await parseCriteriaFromMessage(message, context);
+    }
+
+    // A customer asking for two different parts in one message ("battery
+    // tray AND battery hold down clamp") will never match a single product
+    // — searching for one part at a time and saying so beats a repeated,
+    // confusing "no match" with no explanation.
+    let compoundNote = '';
+    if (criteria.keyword) {
+      const parts = criteria.keyword.split(/\s+(?:and|&)\s+/i);
+      if (parts.length > 1) {
+        const primary = parts[0].trim();
+        const extra = parts.slice(1).join(' and ').trim();
+        criteria.keyword = primary;
+        compoundNote = `I can only search one part at a time — let's find "${primary}" first, then just ask me about "${extra}" separately. `;
+      }
     }
 
     // Year is required before anything else — without it, "matches" spans
@@ -563,6 +582,17 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
+    if (!isKnownMake(criteria.make)) {
+      logSearch({ message, criteria, outcome: 'unsupported_make', matchCount: 0 });
+      return res.json({
+        reply: `We specialize in OEM parts for cars, trucks, and SUVs — we don't believe we carry parts for ${criteria.make}. Feel free to <a href="/pages/contact-us">contact us</a> to double check!`,
+        criteria,
+        matchCount: 0,
+        products: [],
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+      });
+    }
+
     let matches = getMatches(criteria.year, criteria.make, criteria.model);
     matches = filterByQualifiers(matches, criteria);
     matches = filterByKeyword(matches, criteria.keyword);
@@ -583,7 +613,7 @@ app.post('/api/chat', async (req, res) => {
     if (matches.length > MAX_REASONABLE_MATCHES) {
       logSearch({ message, criteria, outcome: 'too_many_matches', matchCount: matches.length });
       return res.json({
-        reply: didYouMeanNote + `That matches quite a few parts (${matches.length}) — can you tell me more specifically what part you're looking for, or narrow the model/trim?`,
+        reply: compoundNote + didYouMeanNote + `That matches quite a few parts (${matches.length}) — can you tell me more specifically what part you're looking for, or narrow the model/trim?`,
         criteria,
         matchCount: matches.length,
         products: [],
@@ -610,7 +640,7 @@ app.post('/api/chat', async (req, res) => {
         options: options.map((p) => p.title),
       });
       return res.json({
-        reply: didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`,
+        reply: compoundNote + didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`,
         criteria,
         matchCount: matches.length,
         products: options.map((p) => ({ ...trimForDisplay(p, criteria), shortLabel: buildShortLabel(p, criteria) })),
@@ -656,7 +686,7 @@ app.post('/api/chat', async (req, res) => {
     } else {
       reply = `Found ${matches.length} matching options for your vehicle.`;
     }
-    reply = didYouMeanNote + reply;
+    reply = compoundNote + didYouMeanNote + reply;
 
     logSearch({
       message,
