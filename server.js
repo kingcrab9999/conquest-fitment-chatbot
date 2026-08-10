@@ -398,6 +398,22 @@ app.post('/api/match', (req, res) => {
 // (excluded by the standard to avoid confusion with 1/0). Looks for one
 // anywhere in the message rather than requiring the whole message to be
 // exactly a VIN — customers often prefix it ("VIN: ...") or add extra text.
+// Recognizes text that's SHAPED like a part number (a single alphanumeric
+// token, optionally with dashes, with at least one digit) even when it's
+// not one we actually carry — this is what lets us say "we don't carry
+// that part number" directly instead of treating it as a vehicle/keyword
+// search and asking for a year.
+function looksLikePartNumber(text) {
+  const t = text.trim();
+  if (/\s/.test(t)) return false; // real part numbers are a single token, no spaces
+  const stripped = t.replace(/-/g, '');
+  if (!/^[A-Za-z0-9]+$/.test(stripped)) return false;
+  if (stripped.length < 5 || stripped.length > 17) return false;
+  if (!/\d/.test(stripped)) return false; // part numbers always contain digits
+  if (/^(19|20)\d{2}/.test(stripped)) return false; // starts like a year — likely a mashed year+model, not a part number
+  return true;
+}
+
 function extractVin(text) {
   const cleaned = text.replace(/\bvin\b[:#]?\s*/i, '');
   const match = cleaned.match(/\b[A-HJ-NPR-Z0-9]{17}\b/);
@@ -502,6 +518,21 @@ app.post('/api/chat', async (req, res) => {
         criteria: {},
         matchCount: 1,
         products: [trimForDisplay(skuMatch, {})],
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+      });
+    }
+
+    // Not in our catalog — but if it's SHAPED like a part number (not a
+    // sentence or vehicle description), say so directly instead of falling
+    // through to the normal vehicle-info flow, which would just confuse a
+    // customer who already gave the one exact identifier that matters.
+    if (looksLikePartNumber(message)) {
+      logSearch({ message, criteria: {}, outcome: 'part_number_not_carried', matchCount: 0 });
+      return res.json({
+        reply: `We don't currently carry part number "${message.trim()}" — sorry about that! We may add it in the future if there's enough demand. Feel free to <a href="/pages/contact-us">contact us</a> if you'd like us to look into sourcing it.`,
+        criteria: {},
+        matchCount: 0,
+        products: [],
         qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
       });
     }
