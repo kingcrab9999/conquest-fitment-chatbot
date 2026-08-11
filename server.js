@@ -739,6 +739,20 @@ app.post('/api/chat', async (req, res) => {
         const decoded = await decodeVin(vinCandidate);
         if (decoded && decoded.make && decoded.model) {
           criteria = { ...context, ...decoded };
+          // Confirm what the VIN actually decoded to — without this, a VIN
+          // with no part mentioned yet falls straight into "that matches
+          // quite a few parts," which never tells the customer their VIN
+          // was even understood, let alone what vehicle it resolved to.
+          if (!criteria.keyword) {
+            logSearch({ message, criteria, outcome: 'vin_decoded', matchCount: null });
+            return res.json({
+              reply: `Got it — your VIN is a ${decoded.year} ${decoded.make} ${decoded.model}${decoded.engine ? ` (${decoded.engine})` : ''}. How can I help you find parts for it?`,
+              criteria,
+              matchCount: null,
+              products: [],
+              qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+            });
+          }
         } else {
           logSearch({ message, criteria: {}, outcome: 'vin_decode_failed', matchCount: null });
           return res.json({
