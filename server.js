@@ -658,11 +658,44 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
+    // VIN check runs BEFORE the generic part-number check — a VIN is a more
+    // specific, exact match (17 chars, particular letter exclusions) and
+    // should never be misread as "an OEM part number we don't carry."
+    let criteria = null;
+    const vinCandidate = extractVin(message);
+    if (vinCandidate) {
+      try {
+        const decoded = await decodeVin(vinCandidate);
+        if (decoded && decoded.make && decoded.model) {
+          criteria = { ...context, ...decoded };
+        } else {
+          logSearch({ message, criteria: {}, outcome: 'vin_decode_failed', matchCount: null });
+          return res.json({
+            reply: `I couldn't decode that VIN — could you double-check it, or just tell me your year, make, and model instead?`,
+            criteria: context || {},
+            matchCount: null,
+            products: [],
+            qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+          });
+        }
+      } catch (e) {
+        console.error('VIN decode failed:', e.message);
+        logSearch({ message, criteria: {}, outcome: 'vin_decode_error', matchCount: null });
+        return res.json({
+          reply: `I had trouble decoding that VIN — could you double-check it, or just tell me your year, make, and model instead?`,
+          criteria: context || {},
+          matchCount: null,
+          products: [],
+          qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+        });
+      }
+    }
+
     // Not in our catalog — but if it's SHAPED like a part number (not a
-    // sentence or vehicle description), say so directly instead of falling
-    // through to the normal vehicle-info flow, which would just confuse a
-    // customer who already gave the one exact identifier that matters.
-    if (looksLikePartNumber(message)) {
+    // sentence, vehicle description, or VIN) — say so directly instead of
+    // falling through to the normal vehicle-info flow, which would just
+    // confuse a customer who already gave the one exact identifier that matters.
+    if (!criteria && looksLikePartNumber(message)) {
       logSearch({ message, criteria: {}, outcome: 'part_number_not_carried', matchCount: 0 });
       return res.json({
         reply: `We don't currently carry part number "${message.trim()}" — sorry about that! We may add it in the future if there's enough demand. Feel free to <a href="/pages/contact-us">contact us</a> if you'd like us to look into sourcing it.`,
@@ -673,19 +706,6 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    let criteria = null;
-    const vinCandidate = extractVin(message);
-    if (vinCandidate) {
-      try {
-        const decoded = await decodeVin(vinCandidate);
-        if (decoded && decoded.make && decoded.model) {
-          criteria = { ...context, ...decoded };
-        }
-      } catch (e) {
-        console.error('VIN decode failed:', e.message);
-        // falls through to normal AI parsing below
-      }
-    }
     if (!criteria) {
       criteria = await parseCriteriaFromMessage(message, context);
     }
