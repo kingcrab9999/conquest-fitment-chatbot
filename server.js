@@ -199,6 +199,56 @@ async function getShopifyToken() {
   return shopifyToken;
 }
 
+// Looks up an order by number, but only ever returns it if the given email
+// also matches the order's actual email — this is the same verification
+// your own /pages/order-status page uses, and prevents someone from seeing
+// another customer's order just by guessing a sequential order number.
+async function lookupOrderStatus(orderNumber, email) {
+  const token = await getShopifyToken();
+  const cleanNumber = orderNumber.replace(/^#/, '').trim();
+  const res = await fetch(`https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+    body: JSON.stringify({
+      query: `query($q: String!) {
+        orders(first: 3, query: $q) {
+          edges {
+            node {
+              name
+              email
+              displayFulfillmentStatus
+              displayFinancialStatus
+              createdAt
+              fulfillments(first: 5) {
+                trackingInfo { number url company }
+              }
+            }
+          }
+        }
+      }`,
+      variables: { q: `name:${cleanNumber}` },
+    }),
+  });
+  const json = await res.json();
+  if (json.errors) throw new Error('Shopify order lookup error: ' + JSON.stringify(json.errors));
+  const orders = (json.data?.orders?.edges || []).map((e) => e.node);
+  return orders.find((o) => o.email && o.email.toLowerCase() === email.toLowerCase().trim()) || null;
+}
+
+function formatOrderStatusReply(order) {
+  const trackingLinks = [];
+  for (const f of order.fulfillments || []) {
+    for (const t of f.trackingInfo || []) {
+      if (t.url) trackingLinks.push(`<a href="${t.url}">${(t.company || 'Track')} ${t.number || ''}</a>`.trim());
+      else if (t.number) trackingLinks.push(`${t.company || ''} ${t.number}`.trim());
+    }
+  }
+  const trackingText = trackingLinks.length ? ` Tracking: ${trackingLinks.join(', ')}.` : '';
+  const statusMap = { FULFILLED: 'shipped', UNFULFILLED: 'not yet shipped', PARTIAL: 'partially shipped', RESTOCKED: 'restocked', IN_PROGRESS: 'being prepared for shipment' };
+  const statusText = statusMap[order.displayFulfillmentStatus] || (order.displayFulfillmentStatus || '').toLowerCase() || 'being processed';
+  return `Order ${order.name} is currently ${statusText}.${trackingText}`;
+}
+
 async function fetchSingleProduct(productId) {
   const token = await getShopifyToken();
   const res = await fetch(`https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
@@ -402,6 +452,28 @@ app.post('/api/match', (req, res) => {
 // Recognizes text that's SHAPED like a part number (a single alphanumeric
 // token, optionally with dashes, with at least one digit) even when it's
 // not one we actually carry — this is what lets us say "we don't carry
+// Common phrasings for "let me see your whole catalog at once" — the kind
+// of request that's rarely a genuine customer need and much more often a
+// scraper or competitor trying to pull product data in bulk.
+const BULK_BROWSE_PATTERNS = [
+  /\bshow me everything\b/i,
+  /\ball (of )?your products\b/i,
+  /\ball(?: your| the)? products\b/i,
+  /\bentire (catalog|inventory|stock)\b/i,
+  /\b(full|whole) (catalog|inventory)\b/i,
+  /\bbest[\s-]?sell(er|ers|ing)\b/i,
+  /\bmost popular\b/i,
+  /\btop sell(er|ers|ing)\b/i,
+  /\blist (all|everything)\b/i,
+  /\beverything you (have|carry|sell|stock)\b/i,
+  /\bwhat (all )?do you (have|carry|sell|stock)\b/i,
+  /\byour (whole|entire) selection\b/i,
+];
+
+function looksLikeBulkBrowseRequest(text) {
+  return BULK_BROWSE_PATTERNS.some((re) => re.test(text));
+}
+
 // that part number" directly instead of treating it as a vehicle/keyword
 // search and asking for a year.
 function looksLikePartNumber(text) {
@@ -446,10 +518,22 @@ async function decodeVin(vin) {
   };
 }
 
-const PARSE_SYSTEM_PROMPT = `You extract vehicle fitment search criteria from a customer's message about an auto part.
+const PARSE_SYSTEM_PROMPT = `You extract vehicle fitment search criteria from a customer's message about an auto part, for Conquest Auto Parts, an OEM specialty auto parts retailer (not a chain store — they carry specialized OEM/dealer parts, not common maintenance items).
+
+KNOWN FACTS you can use in conversational replies (never state facts beyond these — for anything else, point to Contact Us):
+- Family-owned, founded 2006, based in the Houston/League City, TX area. 20+ years in business, 500,000+ orders shipped, 4.9-star Google rating.
+- Specializes exclusively in Genuine OEM parts — no aftermarket, no knockoffs, no counterfeits.
+- Returns: 30 days from receipt for a full refund of the part's price (original shipping not refunded). No need to contact them first. Requires the original manufacturer packaging with the part number label still intact/attached — installed, painted, damaged, or repackaged parts, or parts missing that label, cannot be returned. Ship returns via UPS or FedEx (not USPS) with tracking to: Conquest Auto Parts, 1320 HWY 3 South, Suite C4, League City, TX 77573. Refunds process ~1 business day after inspection; funds typically appear in 3-5 business days after that (bank may take up to 7 more days).
+- Order status/tracking: can be checked right here in chat (see order_status intent below), or at /pages/order-status, using the order number and the email used at checkout.
+- Contact: /pages/contact-us, or text/call 281-742-9651.
+
 Given their message and any already-known criteria, output ONLY a JSON object (no markdown, no preamble):
 
 {
+  "intent": "part_search" | "conversation" | "order_status" | "bulk_request",
+  "conversational_reply": string or null,
+  "order_number": string or null,
+  "order_email": string or null,
   "year": number or null,
   "make": string or null,
   "model": string or null,
@@ -463,6 +547,24 @@ Given their message and any already-known criteria, output ONLY a JSON object (n
 }
 
 Rules:
+- "intent": "bulk_request" for anything asking to browse/see the whole catalog, all products, best
+  sellers, most popular items, or similar broad requests with no specific vehicle or part in mind —
+  this tool is for finding a specific part, not bulk browsing. "order_status" for anything about
+  checking an order's status, tracking a shipment, or "where is my order" — extract "order_number"
+  (digits, with or without a # — normalize to just the digits) and "order_email" if given in the
+  message. "conversation" for greetings, thanks, small talk,
+  or general questions using the KNOWN FACTS above (or politely deflecting to Contact Us if it's not
+  covered by those facts). "part_search" for anything about finding, describing, or asking whether a
+  part fits — including a bare vehicle description or part name with no other context, since that's
+  almost always the start of a part search.
+- When intent is "conversation": write a brief, warm, natural reply (1-3 sentences) in
+  "conversational_reply", using the KNOWN FACTS above where relevant. Never invent specific facts,
+  prices, or policies beyond what's listed there — for anything else, suggest Contact Us. Leave all
+  other fields null.
+- When intent is "order_status": leave "conversational_reply" null. Carry forward order_number/
+  order_email from already-known criteria if the customer already gave them in an earlier message.
+- When intent is "part_search": leave "conversational_reply", "order_number", and "order_email" null,
+  and extract the other fields normally.
 - Carry forward any already-known criteria unless the new message changes it.
 - Only fill a field if it's actually stated or clearly implied (e.g. "my truck" doesn't imply a make).
 - Normalize make/model to standard vehicle naming (e.g. "silverado" not "chevy truck").
@@ -512,6 +614,20 @@ app.post('/api/chat', async (req, res) => {
     const { message, context } = req.body || {};
     if (!message) return res.status(400).json({ error: 'message is required' });
     if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: 'Chat is not configured (missing ANTHROPIC_API_KEY)' });
+
+    // Block obvious bulk-catalog-browsing requests immediately — this tool
+    // is meant to help find a specific part, not act as a scraping vector
+    // for someone trying to pull the whole catalog or product data en masse.
+    if (looksLikeBulkBrowseRequest(message)) {
+      logSearch({ message, criteria: {}, outcome: 'bulk_browse_blocked', matchCount: null });
+      return res.json({
+        reply: `I'm built to help you find a specific part for your vehicle, not browse everything at once — head to our <a href="/collections/all">shop page</a> to browse the full catalog directly.`,
+        criteria: {},
+        matchCount: null,
+        products: [],
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+      });
+    }
 
     // Fast-path: if this looks like a part number/SKU, skip the AI entirely —
     // a SKU already uniquely identifies the exact part, no vehicle needed.
@@ -572,6 +688,74 @@ app.post('/api/chat', async (req, res) => {
     }
     if (!criteria) {
       criteria = await parseCriteriaFromMessage(message, context);
+    }
+
+    if (criteria.intent === 'bulk_request') {
+      logSearch({ message, criteria: {}, outcome: 'bulk_browse_blocked', matchCount: null });
+      return res.json({
+        reply: `I'm built to help you find a specific part for your vehicle, not browse everything at once — head to our <a href="/collections/all">shop page</a> to browse the full catalog directly.`,
+        criteria: {},
+        matchCount: null,
+        products: [],
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+      });
+    }
+
+    // Small talk, greetings, thanks, general questions — respond naturally
+    // instead of forcing the vehicle-search flow. Keeps whatever vehicle/
+    // part context was already established, in case they follow up with an
+    // actual search right after.
+    if (criteria.intent === 'conversation') {
+      logSearch({ message, criteria, outcome: 'conversation', matchCount: null });
+      return res.json({
+        reply: criteria.conversational_reply || "Happy to help! Tell me your vehicle and what part you're looking for, and I'll find it.",
+        criteria: context || {},
+        matchCount: null,
+        products: [],
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+      });
+    }
+
+    if (criteria.intent === 'order_status') {
+      if (!criteria.order_number || !criteria.order_email) {
+        const missing =
+          !criteria.order_number && !criteria.order_email
+            ? 'your order number and the email you used at checkout'
+            : !criteria.order_number
+            ? 'your order number'
+            : 'the email you used at checkout';
+        logSearch({ message, criteria, outcome: 'asked_for_order_info', matchCount: null });
+        return res.json({
+          reply: `Happy to check that! Could you give me ${missing}?`,
+          criteria,
+          matchCount: null,
+          products: [],
+          qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+        });
+      }
+      try {
+        const order = await lookupOrderStatus(criteria.order_number, criteria.order_email);
+        logSearch({ message, criteria: { intent: 'order_status' }, outcome: order ? 'order_found' : 'order_not_found', matchCount: null });
+        return res.json({
+          reply: order
+            ? formatOrderStatusReply(order)
+            : `I couldn't find an order matching that number and email — please double-check both, or visit our <a href="/pages/order-status">Order Status page</a> directly.`,
+          criteria: {}, // don't carry order number/email into future part searches
+          matchCount: null,
+          products: [],
+          qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+        });
+      } catch (e) {
+        console.error('Order lookup failed:', e.message);
+        logSearch({ message, criteria: { intent: 'order_status' }, outcome: 'order_lookup_error', matchCount: null });
+        return res.json({
+          reply: `Sorry, I'm having trouble checking order status right now — please try our <a href="/pages/order-status">Order Status page</a> directly, or <a href="/pages/contact-us">contact us</a>.`,
+          criteria: {},
+          matchCount: null,
+          products: [],
+          qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+        });
+      }
     }
 
     // A customer asking for two different parts in one message ("battery
