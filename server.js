@@ -824,7 +824,7 @@ app.post('/api/chat', async (req, res) => {
     if (criteria.intent === 'order_status') {
       logSearch({ message, criteria: { intent: 'order_status' }, outcome: 'order_status_redirect', matchCount: null });
       return res.json({
-        reply: `You can check your order status and tracking right here: <a href="/pages/order-status">Order Status page</a> — just enter your order number and the email you used at checkout.`,
+        reply: `For your order status and tracking, please visit our <a href="/pages/order-status">Order Status page</a> — that's the fastest way to get your live tracking info.`,
         criteria: {},
         matchCount: null,
         products: [],
