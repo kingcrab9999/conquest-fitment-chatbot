@@ -65,7 +65,7 @@ const ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001';
 const PORT = process.env.PORT || 3001;
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-admin-secret');
@@ -608,6 +608,77 @@ async function parseCriteriaFromMessage(message, knownCriteria) {
   const cleaned = text.replace(/```json|```/g, '').trim();
   return JSON.parse(cleaned);
 }
+
+// ── Photo search ─────────────────────────────────────────────────
+// Takes a photo of a physical part, reads any visible part number, and/or
+// describes the part in plain text — that text then gets run through the
+// exact same search pipeline as if the customer had typed it, so all the
+// existing matching/narrowing logic applies without duplicating any of it.
+
+const VISION_SYSTEM_PROMPT = `You are looking at a photo of an automotive part for an OEM auto parts search. Identify:
+1. Any visible manufacturer part number printed, stamped, or labeled directly on the part (not a
+   barcode you can't actually read — just legible alphanumeric text that looks like a part number).
+   If nothing is clearly legible, use null.
+2. A short, plain-English description of the part suitable for a text search — the part TYPE (e.g.
+   "door handle", "tail light", "mirror", "window switch") plus distinguishing features like color,
+   material, connector shape, or side if visible.
+
+Output ONLY a JSON object:
+{
+  "part_number": string or null,
+  "description": string
+}
+
+Respond with the JSON object only.`;
+
+async function analyzeProductImage(base64Image, mimeType) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: ANTHROPIC_MODEL,
+      max_tokens: 300,
+      system: VISION_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Image } },
+            { type: 'text', text: 'Identify this automotive part.' },
+          ],
+        },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`Vision API error: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  const text = data.content.find((b) => b.type === 'text')?.text || '';
+  const cleaned = text.replace(/```json|```/g, '').trim();
+  const parsed = JSON.parse(cleaned);
+  return {
+    part_number: parsed.part_number || null,
+    description: parsed.description || '',
+    searchText: parsed.part_number || parsed.description || '',
+  };
+}
+
+app.post('/api/vision-search', async (req, res) => {
+  try {
+    const { image, mimeType } = req.body || {};
+    if (!image) return res.status(400).json({ error: 'image is required' });
+    if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: 'Photo search is not configured (missing ANTHROPIC_API_KEY)' });
+    const result = await analyzeProductImage(image, mimeType || 'image/jpeg');
+    logSearch({ message: `[photo] ${result.searchText}`, criteria: {}, outcome: 'photo_analyzed', matchCount: null });
+    res.json(result);
+  } catch (e) {
+    console.error('Vision search error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 app.post('/api/chat', async (req, res) => {
   try {
