@@ -875,6 +875,20 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
+    // Make alone isn't enough — "Honda" spans dozens of different models,
+    // and a part number that looks right for one model can be completely
+    // wrong for another. Model is required before any matching runs.
+    if (!criteria.model) {
+      logSearch({ message, criteria, outcome: 'asked_for_model', matchCount: null });
+      return res.json({
+        reply: `Which ${criteria.make} model is it? Parts often differ between models even within the same brand.`,
+        criteria,
+        matchCount: null,
+        products: [],
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+      });
+    }
+
     // Check this decisively, before any matching runs — a fuzzy/loose match
     // on some unrelated product (e.g. a "brake CLUTCH PEDAL pad" technically
     // containing both words) shouldn't be able to mask this message. If the
