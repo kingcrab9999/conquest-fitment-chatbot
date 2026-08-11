@@ -995,7 +995,7 @@ app.post('/api/chat', async (req, res) => {
         const suggestionText = suggestions.length ? ` Did you mean: ${suggestions.join(', ')}?` : '';
         reply = `We don't currently carry "${criteria.keyword}" — sorry about that!${suggestionText} Feel free to <a href="/pages/contact-us">contact us</a> if you'd like us to try to source it, or check back later as our inventory grows.`;
       } else {
-        reply = `We carry that type of part, but not for your specific ${criteria.year} ${criteria.make} ${criteria.model} — could you double check the year, make, and model? One of the details (like engine or side) might also not match what's in stock.`;
+        reply = `We don't currently have this part for your ${criteria.year} ${criteria.make} ${criteria.model} — sorry about that! We may add it to the catalog in the future if there's enough demand.`;
       }
     } else if (stillAmbiguous) {
       const asks = [];
