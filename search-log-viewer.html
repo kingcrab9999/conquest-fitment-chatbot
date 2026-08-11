@@ -84,7 +84,8 @@
           const criteriaBits = [e.criteria?.year, e.criteria?.make, e.criteria?.model, e.criteria?.keyword]
             .filter(Boolean).join(' ');
           const queryText = e.message || criteriaBits || '(narrowing step)';
-          const resultsText = (e.results || []).slice(0, 5).map((r) => r.title).join('; ') ||
+          const resultsText = e.criteria?.error ? `⚠️ ${e.criteria.error}` :
+            (e.results || []).slice(0, 5).map((r) => r.title).join('; ') ||
             (e.options || []).slice(0, 5).join('; ') || '—';
 
           tr.innerHTML = `

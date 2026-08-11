@@ -852,7 +852,7 @@ app.post('/api/chat', async (req, res) => {
         });
       } catch (e) {
         console.error('Order lookup failed:', e.message);
-        logSearch({ message, criteria: { intent: 'order_status' }, outcome: 'order_lookup_error', matchCount: null });
+        logSearch({ message, criteria: { intent: 'order_status', error: e.message }, outcome: 'order_lookup_error', matchCount: null });
         return res.json({
           reply: `Sorry, I'm having trouble checking order status right now — please try our <a href="/pages/order-status">Order Status page</a> directly, or <a href="/pages/contact-us">contact us</a>.`,
           criteria: {},
