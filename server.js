@@ -889,6 +889,16 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
+    // Now that we know the full vehicle, give a heads-up if it's older —
+    // OEM parts availability genuinely thins out for older model years
+    // since manufacturers mostly keep current-year parts in stock, so it's
+    // worth setting that expectation up front rather than letting a string
+    // of "no match" results feel like something's broken.
+    const oldVehicleNote =
+      criteria.year && criteria.year < 2021
+        ? `Heads up! Since we specialize in genuine OEM parts, our catalog tends to run mostly for newer vehicles — parts for vehicles older than 2021 may be limited or unavailable, as manufacturers typically only stock current-year part fitments. `
+        : '';
+
     // Check this decisively, before any matching runs — a fuzzy/loose match
     // on some unrelated product (e.g. a "brake CLUTCH PEDAL pad" technically
     // containing both words) shouldn't be able to mask this message. If the
@@ -936,7 +946,7 @@ app.post('/api/chat', async (req, res) => {
     if (matches.length > MAX_REASONABLE_MATCHES) {
       logSearch({ message, criteria, outcome: 'too_many_matches', matchCount: matches.length });
       return res.json({
-        reply: compoundNote + didYouMeanNote + `That matches quite a few parts (${matches.length}) — can you tell me more specifically what part you're looking for, or narrow the model/trim?`,
+        reply: oldVehicleNote + compoundNote + didYouMeanNote + `That matches quite a few parts (${matches.length}) — can you tell me more specifically what part you're looking for, or narrow the model/trim?`,
         criteria,
         matchCount: matches.length,
         products: [],
@@ -963,7 +973,7 @@ app.post('/api/chat', async (req, res) => {
         options: options.map((p) => p.title),
       });
       return res.json({
-        reply: compoundNote + didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`,
+        reply: oldVehicleNote + compoundNote + didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`,
         criteria,
         matchCount: matches.length,
         products: options.map((p) => ({ ...trimForDisplay(p, criteria), shortLabel: buildShortLabel(p, criteria) })),
@@ -1009,7 +1019,7 @@ app.post('/api/chat', async (req, res) => {
     } else {
       reply = `Found ${matches.length} matching options for your vehicle.`;
     }
-    reply = compoundNote + didYouMeanNote + reply;
+    reply = oldVehicleNote + compoundNote + didYouMeanNote + reply;
 
     logSearch({
       message,
