@@ -822,45 +822,14 @@ app.post('/api/chat', async (req, res) => {
     }
 
     if (criteria.intent === 'order_status') {
-      if (!criteria.order_number || !criteria.order_email) {
-        const missing =
-          !criteria.order_number && !criteria.order_email
-            ? 'your order number and the email you used at checkout'
-            : !criteria.order_number
-            ? 'your order number'
-            : 'the email you used at checkout';
-        logSearch({ message, criteria, outcome: 'asked_for_order_info', matchCount: null });
-        return res.json({
-          reply: `Happy to check that! Could you give me ${missing}?`,
-          criteria,
-          matchCount: null,
-          products: [],
-          qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
-        });
-      }
-      try {
-        const order = await lookupOrderStatus(criteria.order_number, criteria.order_email);
-        logSearch({ message, criteria: { intent: 'order_status' }, outcome: order ? 'order_found' : 'order_not_found', matchCount: null });
-        return res.json({
-          reply: order
-            ? formatOrderStatusReply(order)
-            : `I couldn't find an order matching that number and email — please double-check both, or visit our <a href="/pages/order-status">Order Status page</a> directly.`,
-          criteria: {}, // don't carry order number/email into future part searches
-          matchCount: null,
-          products: [],
-          qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
-        });
-      } catch (e) {
-        console.error('Order lookup failed:', e.message);
-        logSearch({ message, criteria: { intent: 'order_status', error: e.message }, outcome: 'order_lookup_error', matchCount: null });
-        return res.json({
-          reply: `Sorry, I'm having trouble checking order status right now — please try our <a href="/pages/order-status">Order Status page</a> directly, or <a href="/pages/contact-us">contact us</a>.`,
-          criteria: {},
-          matchCount: null,
-          products: [],
-          qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
-        });
-      }
+      logSearch({ message, criteria: { intent: 'order_status' }, outcome: 'order_status_redirect', matchCount: null });
+      return res.json({
+        reply: `You can check your order status and tracking right here: <a href="/pages/order-status">Order Status page</a> — just enter your order number and the email you used at checkout.`,
+        criteria: {},
+        matchCount: null,
+        products: [],
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+      });
     }
 
     // A customer asking for two different parts in one message ("battery
