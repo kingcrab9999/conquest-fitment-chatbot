@@ -315,6 +315,21 @@ function findBySku(query) {
   return index.products.find((p) => normalizeSku(p.sku) === target) || null;
 }
 
+// Same idea as findBySku, but scans a longer message for a SKU-shaped token
+// embedded within it (e.g. "...Trim Panel OEM 6BM40TX7AC") rather than
+// requiring the entire message to be just the SKU. Tries each "word" in the
+// message as a candidate, longest first, so a real part number embedded in
+// a full description still gets caught directly.
+function findEmbeddedSku(message) {
+  const tokens = message.split(/\s+/).filter((t) => t.replace(/[^A-Za-z0-9]/g, '').length >= 5);
+  const sorted = [...tokens].sort((a, b) => b.length - a.length);
+  for (const token of sorted) {
+    const match = findBySku(token);
+    if (match) return match;
+  }
+  return null;
+}
+
 // When a search term isn't in the vocabulary at all, suggest the closest
 // real words from the catalog instead of just saying "not found" — reuses
 // the same edit-distance function as the keyword fuzzy-match fallback.
@@ -348,6 +363,7 @@ module.exports = {
   isKnownPartType,
   isKnownMake,
   findBySku,
+  findEmbeddedSku,
   suggestVocabularyTerms,
   getYears,
   getMakes,

@@ -31,6 +31,7 @@ const {
   isKnownPartType,
   isKnownMake,
   findBySku,
+  findEmbeddedSku,
   suggestVocabularyTerms,
   getYears,
   getMakes,
@@ -410,7 +411,11 @@ function looksLikePartNumber(text) {
   if (!/^[A-Za-z0-9]+$/.test(stripped)) return false;
   if (stripped.length < 5 || stripped.length > 17) return false;
   if (!/\d/.test(stripped)) return false; // part numbers always contain digits
-  if (/^(19|20)\d{2}/.test(stripped)) return false; // starts like a year — likely a mashed year+model, not a part number
+  // Only exclude a year-like prefix if letters follow it — that's the real
+  // "mashed year+model" pattern (e.g. "2023f150"). A purely numeric code
+  // starting with 19/20 is very plausibly a real GM-style part number and
+  // shouldn't be excluded just because of how it starts.
+  if (/^(19|20)\d{2}/.test(stripped) && /[A-Za-z]/.test(stripped.slice(4))) return false;
   return true;
 }
 
@@ -518,6 +523,21 @@ app.post('/api/chat', async (req, res) => {
         criteria: {},
         matchCount: 1,
         products: [trimForDisplay(skuMatch, {})],
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+      });
+    }
+
+    // Not a bare SKU, but might have one embedded in a longer description
+    // ("...Trim Panel OEM 6BM40TX7AC") — check that before assuming this is
+    // a normal vehicle/keyword search.
+    const embeddedSkuMatch = findEmbeddedSku(message);
+    if (embeddedSkuMatch) {
+      logSearch({ message, criteria: {}, outcome: 'sku_direct_match', matchCount: 1, results: [{ title: embeddedSkuMatch.title, sku: embeddedSkuMatch.sku }] });
+      return res.json({
+        reply: `Found it — part number ${embeddedSkuMatch.sku}.`,
+        criteria: {},
+        matchCount: 1,
+        products: [trimForDisplay(embeddedSkuMatch, {})],
         qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
       });
     }
