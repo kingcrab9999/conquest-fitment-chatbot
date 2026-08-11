@@ -124,16 +124,46 @@ function isKnownMake(make) {
   return getAllKnownMakes().some((m) => normalizeKey(m) === normalizeKey(corrected));
 }
 
+// Some models are stored with a trim/weight-class suffix baked in
+// ("ProMaster 1500", "Transit 250") because that's how the listings
+// describe them — but customers naturally just say "ProMaster" or
+// "Transit" with no number. Exact/fuzzy matching alone can't bridge that
+// gap (the strings are too different), so this checks whether the stored
+// model starts with the customer's model at a word boundary (space or
+// dash), which correctly matches "ProMaster" against all three of
+// "ProMaster 1500/2500/3500" at once rather than requiring one exact pick.
+function modelMatches(customerModel, storedModel) {
+  if (normalizeKey(customerModel) === normalizeKey(storedModel)) return true;
+  const c = customerModel.toLowerCase().trim();
+  const s = storedModel.toLowerCase().trim();
+  return s.startsWith(c + ' ') || s.startsWith(c + '-');
+}
+
 function getMatches(year, make, model) {
   const index = loadIndex();
   const correctedMake = make ? fuzzyCorrectVehicleName(make, getAllKnownMakes()) : make;
-  const correctedModel = model ? fuzzyCorrectVehicleName(model, getAllKnownModels()) : model;
   const makeKey = normalizeKey(correctedMake);
-  const modelKey = normalizeKey(correctedModel);
+
+  // Try the model as given first (handles both exact matches and the
+  // trim-suffix case above). Only fall back to typo-correction if that
+  // finds nothing at all — otherwise a genuine typo-correction could
+  // arbitrarily collapse "ProMaster" onto just one of its three trims
+  // instead of matching all of them via the prefix check.
+  let workingModel = model;
+  if (model) {
+    const candidates = index.products.filter(
+      (p) => coversYear(p, year) && (!makeKey || p.makes.some((m) => normalizeKey(m) === makeKey))
+    );
+    const hasDirectMatch = candidates.some((p) => p.models.some((m) => modelMatches(model, m)));
+    if (!hasDirectMatch) {
+      workingModel = fuzzyCorrectVehicleName(model, getAllKnownModels());
+    }
+  }
+
   return index.products.filter((p) => {
     if (!coversYear(p, year)) return false;
     if (makeKey && !p.makes.some((m) => normalizeKey(m) === makeKey)) return false;
-    if (modelKey && !p.models.some((m) => normalizeKey(m) === modelKey)) return false;
+    if (workingModel && !p.models.some((m) => modelMatches(workingModel, m))) return false;
     return true;
   });
 }
