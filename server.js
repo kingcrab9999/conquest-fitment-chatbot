@@ -418,11 +418,18 @@ app.post('/api/match', (req, res) => {
     matches = filterByQualifiers(matches, { side, position, color, engine, option_package });
     if (keyword) matches = filterByKeyword(matches, keyword);
     const displayCriteria = { year: year ? Number(year) : null, make, model };
+    const matchReply =
+      matches.length === 0
+        ? 'No matches for this narrowing selection.'
+        : matches.length === 1
+        ? `Found it — this fits your vehicle. (${matches[0].title})`
+        : `${matches.length} matching options shown.`;
     logSearch({
       message: null,
       criteria: { year, make, model, side, position, color, engine, option_package, keyword },
       outcome: matches.length === 0 ? 'no_match' : matches.length === 1 ? 'single_match' : 'multiple_matches',
       matchCount: matches.length,
+      reply: matchReply,
       results: matches.slice(0, 20).map((p) => ({ title: p.title, sku: p.sku })),
       source: 'match_endpoint',
     });
@@ -672,7 +679,7 @@ app.post('/api/vision-search', async (req, res) => {
     if (!image) return res.status(400).json({ error: 'image is required' });
     if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: 'Photo search is not configured (missing ANTHROPIC_API_KEY)' });
     const result = await analyzeProductImage(image, mimeType || 'image/jpeg');
-    logSearch({ message: `[photo] ${result.searchText}`, criteria: {}, outcome: 'photo_analyzed', matchCount: null });
+    logSearch({ message: `[photo] ${result.searchText}`, criteria: {}, outcome: 'photo_analyzed', matchCount: null, reply: `Analyzed photo: ${result.part_number ? `part number "${result.part_number}"` : `"${result.description}"`}` });
     res.json(result);
   } catch (e) {
     console.error('Vision search error:', e.message);
@@ -690,9 +697,10 @@ app.post('/api/chat', async (req, res) => {
     // is meant to help find a specific part, not act as a scraping vector
     // for someone trying to pull the whole catalog or product data en masse.
     if (looksLikeBulkBrowseRequest(message)) {
-      logSearch({ message, criteria: {}, outcome: 'bulk_browse_blocked', matchCount: null });
+      const bulkReply = `I'm built to help you find a specific part for your vehicle, not browse everything at once — head to our <a href="/collections/all">shop page</a> to browse the full catalog directly.`;
+      logSearch({ message, criteria: {}, outcome: 'bulk_browse_blocked', matchCount: null, reply: bulkReply });
       return res.json({
-        reply: `I'm built to help you find a specific part for your vehicle, not browse everything at once — head to our <a href="/collections/all">shop page</a> to browse the full catalog directly.`,
+        reply: bulkReply,
         criteria: {},
         matchCount: null,
         products: [],
@@ -704,7 +712,7 @@ app.post('/api/chat', async (req, res) => {
     // a SKU already uniquely identifies the exact part, no vehicle needed.
     const skuMatch = findBySku(message);
     if (skuMatch) {
-      logSearch({ message, criteria: {}, outcome: 'sku_direct_match', matchCount: 1, results: [{ title: skuMatch.title, sku: skuMatch.sku }] });
+      logSearch({ message, criteria: {}, outcome: 'sku_direct_match', matchCount: 1, reply: `Found it — part number ${skuMatch.sku}.`, results: [{ title: skuMatch.title, sku: skuMatch.sku }] });
       return res.json({
         reply: `Found it — part number ${skuMatch.sku}.`,
         criteria: {},
@@ -719,7 +727,7 @@ app.post('/api/chat', async (req, res) => {
     // a normal vehicle/keyword search.
     const embeddedSkuMatch = findEmbeddedSku(message);
     if (embeddedSkuMatch) {
-      logSearch({ message, criteria: {}, outcome: 'sku_direct_match', matchCount: 1, results: [{ title: embeddedSkuMatch.title, sku: embeddedSkuMatch.sku }] });
+      logSearch({ message, criteria: {}, outcome: 'sku_direct_match', matchCount: 1, reply: `Found it — part number ${embeddedSkuMatch.sku}.`, results: [{ title: embeddedSkuMatch.title, sku: embeddedSkuMatch.sku }] });
       return res.json({
         reply: `Found it — part number ${embeddedSkuMatch.sku}.`,
         criteria: {},
@@ -744,9 +752,10 @@ app.post('/api/chat', async (req, res) => {
           // quite a few parts," which never tells the customer their VIN
           // was even understood, let alone what vehicle it resolved to.
           if (!criteria.keyword) {
-            logSearch({ message, criteria, outcome: 'vin_decoded', matchCount: null });
+            const vinReply = `Got it — your VIN is a ${decoded.year} ${decoded.make} ${decoded.model}${decoded.engine ? ` (${decoded.engine})` : ''}. How can I help you find parts for it?`;
+            logSearch({ message, criteria, outcome: 'vin_decoded', matchCount: null, reply: vinReply });
             return res.json({
-              reply: `Got it — your VIN is a ${decoded.year} ${decoded.make} ${decoded.model}${decoded.engine ? ` (${decoded.engine})` : ''}. How can I help you find parts for it?`,
+              reply: vinReply,
               criteria,
               matchCount: null,
               products: [],
@@ -754,9 +763,10 @@ app.post('/api/chat', async (req, res) => {
             });
           }
         } else {
-          logSearch({ message, criteria: {}, outcome: 'vin_decode_failed', matchCount: null });
+          const vinFailReply = `I couldn't decode that VIN — could you double-check it, or just tell me your year, make, and model instead?`;
+          logSearch({ message, criteria: {}, outcome: 'vin_decode_failed', matchCount: null, reply: vinFailReply });
           return res.json({
-            reply: `I couldn't decode that VIN — could you double-check it, or just tell me your year, make, and model instead?`,
+            reply: vinFailReply,
             criteria: context || {},
             matchCount: null,
             products: [],
@@ -765,9 +775,10 @@ app.post('/api/chat', async (req, res) => {
         }
       } catch (e) {
         console.error('VIN decode failed:', e.message);
-        logSearch({ message, criteria: {}, outcome: 'vin_decode_error', matchCount: null });
+        const vinErrReply = `I had trouble decoding that VIN — could you double-check it, or just tell me your year, make, and model instead?`;
+        logSearch({ message, criteria: {}, outcome: 'vin_decode_error', matchCount: null, reply: vinErrReply });
         return res.json({
-          reply: `I had trouble decoding that VIN — could you double-check it, or just tell me your year, make, and model instead?`,
+          reply: vinErrReply,
           criteria: context || {},
           matchCount: null,
           products: [],
@@ -781,9 +792,10 @@ app.post('/api/chat', async (req, res) => {
     // falling through to the normal vehicle-info flow, which would just
     // confuse a customer who already gave the one exact identifier that matters.
     if (!criteria && looksLikePartNumber(message)) {
-      logSearch({ message, criteria: {}, outcome: 'part_number_not_carried', matchCount: 0 });
+      const partNumReply = `We don't currently carry part number "${message.trim()}" — sorry about that! We may add it in the future if there's enough demand. Feel free to <a href="/pages/contact-us">contact us</a> if you'd like us to look into sourcing it.`;
+      logSearch({ message, criteria: {}, outcome: 'part_number_not_carried', matchCount: 0, reply: partNumReply });
       return res.json({
-        reply: `We don't currently carry part number "${message.trim()}" — sorry about that! We may add it in the future if there's enough demand. Feel free to <a href="/pages/contact-us">contact us</a> if you'd like us to look into sourcing it.`,
+        reply: partNumReply,
         criteria: {},
         matchCount: 0,
         products: [],
@@ -796,9 +808,10 @@ app.post('/api/chat', async (req, res) => {
     }
 
     if (criteria.intent === 'bulk_request') {
-      logSearch({ message, criteria: {}, outcome: 'bulk_browse_blocked', matchCount: null });
+      const bulkReply2 = `I'm built to help you find a specific part for your vehicle, not browse everything at once — head to our <a href="/collections/all">shop page</a> to browse the full catalog directly.`;
+      logSearch({ message, criteria: {}, outcome: 'bulk_browse_blocked', matchCount: null, reply: bulkReply2 });
       return res.json({
-        reply: `I'm built to help you find a specific part for your vehicle, not browse everything at once — head to our <a href="/collections/all">shop page</a> to browse the full catalog directly.`,
+        reply: bulkReply2,
         criteria: {},
         matchCount: null,
         products: [],
@@ -811,9 +824,10 @@ app.post('/api/chat', async (req, res) => {
     // part context was already established, in case they follow up with an
     // actual search right after.
     if (criteria.intent === 'conversation') {
-      logSearch({ message, criteria, outcome: 'conversation', matchCount: null });
+      const convReply = criteria.conversational_reply || "Happy to help! Tell me your vehicle and what part you're looking for, and I'll find it.";
+      logSearch({ message, criteria, outcome: 'conversation', matchCount: null, reply: convReply });
       return res.json({
-        reply: criteria.conversational_reply || "Happy to help! Tell me your vehicle and what part you're looking for, and I'll find it.",
+        reply: convReply,
         criteria: context || {},
         matchCount: null,
         products: [],
@@ -822,9 +836,10 @@ app.post('/api/chat', async (req, res) => {
     }
 
     if (criteria.intent === 'order_status') {
-      logSearch({ message, criteria: { intent: 'order_status' }, outcome: 'order_status_redirect', matchCount: null });
+      const orderReply = `For your order status and tracking, please visit our <a href="/pages/order-status">Order Status page</a> — that's the fastest way to get your live tracking info.`;
+      logSearch({ message, criteria: { intent: 'order_status' }, outcome: 'order_status_redirect', matchCount: null, reply: orderReply });
       return res.json({
-        reply: `For your order status and tracking, please visit our <a href="/pages/order-status">Order Status page</a> — that's the fastest way to get your live tracking info.`,
+        reply: orderReply,
         criteria: {},
         matchCount: null,
         products: [],
@@ -851,9 +866,10 @@ app.post('/api/chat', async (req, res) => {
     // every model year at once, which for a lot of parts (like this one)
     // means genuinely different physical parts getting lumped together.
     if (!criteria.year) {
-      logSearch({ message, criteria, outcome: 'asked_for_year', matchCount: null });
+      const yearReply = `What year is your vehicle? I need that first to make sure I find the exact right part — styles and part numbers often change between model years.`;
+      logSearch({ message, criteria, outcome: 'asked_for_year', matchCount: null, reply: yearReply });
       return res.json({
-        reply: `What year is your vehicle? I need that first to make sure I find the exact right part — styles and part numbers often change between model years.`,
+        reply: yearReply,
         criteria,
         matchCount: null,
         products: [],
@@ -865,9 +881,10 @@ app.post('/api/chat', async (req, res) => {
     // all — with no vehicle identified, "matches" would be a huge slice of
     // the whole catalog and the qualifier lists below would be meaningless.
     if (!criteria.make && !criteria.model) {
-      logSearch({ message, criteria, outcome: 'asked_for_make_model', matchCount: null });
+      const makeModelReply = `What make and model is your ${criteria.year}? That's the last piece I need.`;
+      logSearch({ message, criteria, outcome: 'asked_for_make_model', matchCount: null, reply: makeModelReply });
       return res.json({
-        reply: `What make and model is your ${criteria.year}? That's the last piece I need.`,
+        reply: makeModelReply,
         criteria,
         matchCount: null,
         products: [],
@@ -879,9 +896,10 @@ app.post('/api/chat', async (req, res) => {
     // and a part number that looks right for one model can be completely
     // wrong for another. Model is required before any matching runs.
     if (!criteria.model) {
-      logSearch({ message, criteria, outcome: 'asked_for_model', matchCount: null });
+      const modelReply = `Which ${criteria.make} model is it? Parts often differ between models even within the same brand.`;
+      logSearch({ message, criteria, outcome: 'asked_for_model', matchCount: null, reply: modelReply });
       return res.json({
-        reply: `Which ${criteria.make} model is it? Parts often differ between models even within the same brand.`,
+        reply: modelReply,
         criteria,
         matchCount: null,
         products: [],
@@ -905,9 +923,10 @@ app.post('/api/chat', async (req, res) => {
     // customer is asking for a common maintenance item, that's the answer
     // regardless of what a keyword search might loosely turn up.
     if (isCommonMaintenancePart(criteria.keyword)) {
-      logSearch({ message, criteria, outcome: 'common_maintenance_item', matchCount: 0 });
+      const commonReply = `We specialize in OEM specialty parts, not common maintenance items — for "${criteria.keyword}" you'll want a local chain auto parts store like AutoZone or O'Reilly's. Happy to help you find something more specialized though!`;
+      logSearch({ message, criteria, outcome: 'common_maintenance_item', matchCount: 0, reply: commonReply });
       return res.json({
-        reply: `We specialize in OEM specialty parts, not common maintenance items — for "${criteria.keyword}" you'll want a local chain auto parts store like AutoZone or O'Reilly's. Happy to help you find something more specialized though!`,
+        reply: commonReply,
         criteria,
         matchCount: 0,
         products: [],
@@ -916,9 +935,10 @@ app.post('/api/chat', async (req, res) => {
     }
 
     if (!isKnownMake(criteria.make)) {
-      logSearch({ message, criteria, outcome: 'unsupported_make', matchCount: 0 });
+      const unsupportedReply = `We specialize in OEM parts for cars, trucks, and SUVs — we don't believe we carry parts for ${criteria.make}. Feel free to <a href="/pages/contact-us">contact us</a> to double check!`;
+      logSearch({ message, criteria, outcome: 'unsupported_make', matchCount: 0, reply: unsupportedReply });
       return res.json({
-        reply: `We specialize in OEM parts for cars, trucks, and SUVs — we don't believe we carry parts for ${criteria.make}. Feel free to <a href="/pages/contact-us">contact us</a> to double check!`,
+        reply: unsupportedReply,
         criteria,
         matchCount: 0,
         products: [],
@@ -944,9 +964,10 @@ app.post('/api/chat', async (req, res) => {
     // across a huge, mostly-unrelated set of products.
     const MAX_REASONABLE_MATCHES = 25;
     if (matches.length > MAX_REASONABLE_MATCHES) {
-      logSearch({ message, criteria, outcome: 'too_many_matches', matchCount: matches.length });
+      const tooManyReply = oldVehicleNote + compoundNote + didYouMeanNote + `That matches quite a few parts (${matches.length}) — can you tell me more specifically what part you're looking for, or narrow the model/trim?`;
+      logSearch({ message, criteria, outcome: 'too_many_matches', matchCount: matches.length, reply: tooManyReply });
       return res.json({
-        reply: oldVehicleNote + compoundNote + didYouMeanNote + `That matches quite a few parts (${matches.length}) — can you tell me more specifically what part you're looking for, or narrow the model/trim?`,
+        reply: tooManyReply,
         criteria,
         matchCount: matches.length,
         products: [],
@@ -965,15 +986,17 @@ app.post('/api/chat', async (req, res) => {
 
     if (groups.length > 1) {
       const options = groups.map((g) => g[0]);
+      const typeSelectReply = oldVehicleNote + compoundNote + didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`;
       logSearch({
         message,
         criteria,
         outcome: 'needs_type_selection',
         matchCount: matches.length,
+        reply: typeSelectReply,
         options: options.map((p) => p.title),
       });
       return res.json({
-        reply: oldVehicleNote + compoundNote + didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`,
+        reply: typeSelectReply,
         criteria,
         matchCount: matches.length,
         products: options.map((p) => ({ ...trimForDisplay(p, criteria), shortLabel: buildShortLabel(p, criteria) })),
@@ -1026,6 +1049,7 @@ app.post('/api/chat', async (req, res) => {
       criteria,
       outcome: matches.length === 0 ? 'no_match' : matches.length === 1 ? 'single_match' : 'multiple_matches',
       matchCount: matches.length,
+      reply,
       results: matches.slice(0, 20).map((p) => ({ title: p.title, sku: p.sku })),
     });
 
