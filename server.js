@@ -481,6 +481,10 @@ const FAQ_PATTERNS = [
     match: /\bexpedited shipping\b|\bexpress shipping\b|\bovernight shipping\b|\brush (my )?(order|shipping)\b|\bfaster shipping\b|\bhow (fast|soon|quickly) (can i get|will i (get|receive)|will it (arrive|ship))\b/i,
     reply: `We only offer standard ground shipping — we don't offer expedited or express shipping, in order to keep prices low. For an actual delivery estimate, check the shipping info at checkout.`,
   },
+  {
+    match: /\bin stock\b|\bstock status\b|\bstock availability\b|\bis (it|this|that) available\b|\bdo you have (it|this|these) available\b/i,
+    reply: `This part is sourced directly from the manufacturer. While it's currently showing as in stock, OEM inventory data can lag behind by a few hours — so there's a small chance it could go on backorder after your order is placed. For the most accurate, up-to-date availability, feel free to <a href="/pages/contact-us">contact us</a> before ordering — we can confirm it's not backordered and give you an accurate shipping estimate.`,
+  },
 ];
 
 function matchFaq(text) {
