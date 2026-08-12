@@ -459,6 +459,37 @@ app.post('/api/match', (req, res) => {
 // Recognizes text that's SHAPED like a part number (a single alphanumeric
 // token, optionally with dashes, with at least one digit) even when it's
 // not one we actually carry — this is what lets us say "we don't carry
+// Fixed-answer FAQ patterns — these get the exact same wording every time,
+// checked before intent classification so they can never get misread as a
+// continuation of a part search using stale leftover context (which is
+// what caused "does it include hardware" to trigger a confusing "no match"
+// response using an old vehicle from earlier in the conversation).
+const FAQ_PATTERNS = [
+  {
+    match: /\b(include|comes? with|included) hardware\b|\bhardware included\b/i,
+    reply: `Our parts don't include mounting hardware (bolts, clips, fasteners, etc.) — you'll need to source that locally.`,
+  },
+  {
+    match: /\bhow (do|can) (i |you )?install\b|\binstallation instructions?\b|\bhow to install\b|\binstall(ation)? guide\b/i,
+    reply: `Our parts don't come with instructions — they're designed to be installed by a dealership technician or an ASE-certified shop. We'd recommend contacting a local dealership or ASE-certified shop for installation help.`,
+  },
+  {
+    match: /\bhow many (are|is|do i get) included\b|\bquantity included\b|\bsold (as a pair|in pairs)\b|\bcomes? (as|in) a pair\b/i,
+    reply: `Unless the listing specifically says otherwise, this is sold individually — quantity of one. Parts are very rarely sold in pairs or multiples.`,
+  },
+  {
+    match: /\bexpedited shipping\b|\bexpress shipping\b|\bovernight shipping\b|\brush (my )?(order|shipping)\b|\bfaster shipping\b|\bhow (fast|soon|quickly) (can i get|will i (get|receive)|will it (arrive|ship))\b/i,
+    reply: `We only offer standard ground shipping — we don't offer expedited or express shipping, in order to keep prices low. For an actual delivery estimate, check the shipping info at checkout.`,
+  },
+];
+
+function matchFaq(text) {
+  for (const faq of FAQ_PATTERNS) {
+    if (faq.match.test(text)) return faq.reply;
+  }
+  return null;
+}
+
 // Common phrasings for "let me see your whole catalog at once" — the kind
 // of request that's rarely a genuine customer need and much more often a
 // scraper or competitor trying to pull product data in bulk.
@@ -533,6 +564,10 @@ KNOWN FACTS you can use in conversational replies (never state facts beyond thes
 - Returns: 30 days from receipt for a full refund of the part's price (original shipping not refunded). No need to contact them first. Requires the original manufacturer packaging with the part number label still intact/attached — installed, painted, damaged, or repackaged parts, or parts missing that label, cannot be returned. Ship returns via UPS or FedEx (not USPS) with tracking to: Conquest Auto Parts, 1320 HWY 3 South, Suite C4, League City, TX 77573. Refunds process ~1 business day after inspection; funds typically appear in 3-5 business days after that (bank may take up to 7 more days).
 - Order status/tracking: can be checked right here in chat (see order_status intent below), or at /pages/order-status, using the order number and the email used at checkout.
 - Contact: /pages/contact-us, or text/call 281-742-9651.
+- Hardware: parts do NOT include mounting hardware (bolts, clips, fasteners) — customers need to source that locally.
+- Installation: parts do not come with instructions and are intended for professional installation by a dealership technician or ASE-certified shop — recommend contacting a local dealership or ASE-certified shop for installation help.
+- Quantity: unless a listing explicitly says otherwise, every part is sold individually (quantity of one) — parts are very rarely sold in pairs or multiples.
+- Shipping: standard ground shipping only — no expedited/express/overnight shipping is offered, in order to keep prices low. For an actual delivery estimate, direct them to checkout or the shipping info on the product page — never state a specific delivery date you don't actually know.
 
 Given their message and any already-known criteria, output ONLY a JSON object (no markdown, no preamble):
 
@@ -692,6 +727,21 @@ app.post('/api/chat', async (req, res) => {
     const { message, context } = req.body || {};
     if (!message) return res.status(400).json({ error: 'message is required' });
     if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: 'Chat is not configured (missing ANTHROPIC_API_KEY)' });
+
+    // Fixed-answer policy questions (hardware, installation, quantity,
+    // shipping speed) — checked first and answered with exact, consistent
+    // wording, before anything tries to treat this as a new part search.
+    const faqReply = matchFaq(message);
+    if (faqReply) {
+      logSearch({ message, criteria: context || {}, outcome: 'faq_answered', matchCount: null, reply: faqReply });
+      return res.json({
+        reply: faqReply,
+        criteria: context || {},
+        matchCount: null,
+        products: [],
+        qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
+      });
+    }
 
     // Block obvious bulk-catalog-browsing requests immediately — this tool
     // is meant to help find a specific part, not act as a scraping vector

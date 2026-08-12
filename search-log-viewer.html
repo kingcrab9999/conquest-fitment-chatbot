@@ -19,7 +19,7 @@
   .outcome-needs_type_selection { background: #fff3d6; color: #a06b00; }
   .outcome-too_many_matches { background: #fff3d6; color: #a06b00; }
   .outcome-asked_for_year, .outcome-asked_for_make_model { background: #f0f0ee; color: #5b6472; }
-  .results-list { max-width: 320px; font-size: 12px; color: #4b5563; }
+  .results-list { max-width: 420px; font-size: 12.5px; color: #4b5563; }
   #status { color: #5b6472; font-size: 13px; margin: 10px 0; }
 </style>
 </head>
@@ -40,7 +40,8 @@
         <th>Query / Criteria</th>
         <th>Outcome</th>
         <th>Matches</th>
-        <th>Results shown</th>
+        <th>Response Shown</th>
+        <th>Products in Response</th>
       </tr>
     </thead>
     <tbody id="logBody"></tbody>
@@ -84,8 +85,8 @@
           const criteriaBits = [e.criteria?.year, e.criteria?.make, e.criteria?.model, e.criteria?.keyword]
             .filter(Boolean).join(' ');
           const queryText = e.message || criteriaBits || '(narrowing step)';
-          const resultsText = e.criteria?.error ? `⚠️ ${e.criteria.error}` :
-            (e.results || []).slice(0, 5).map((r) => r.title).join('; ') ||
+          const replyText = e.reply ? e.reply.replace(/<[^>]+>/g, '') : (e.criteria?.error ? `⚠️ ${e.criteria.error}` : '—');
+          const resultsText = (e.results || []).slice(0, 5).map((r) => r.title).join('; ') ||
             (e.options || []).slice(0, 5).join('; ') || '—';
 
           tr.innerHTML = `
@@ -93,6 +94,7 @@
             <td><strong>${queryText}</strong><br><span style="color:#8a8f98">${criteriaBits}</span></td>
             <td><span class="outcome outcome-${e.outcome}">${(e.outcome || '').replace(/_/g, ' ')}</span></td>
             <td>${e.matchCount ?? '—'}</td>
+            <td class="results-list">${replyText}</td>
             <td class="results-list">${resultsText}</td>
           `;
           body.appendChild(tr);
