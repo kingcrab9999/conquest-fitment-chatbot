@@ -518,10 +518,8 @@ function looksLikeBulkBrowseRequest(text) {
 
 // that part number" directly instead of treating it as a vehicle/keyword
 // search and asking for a year.
-function looksLikePartNumber(text) {
-  const t = text.trim();
-  if (/\s/.test(t)) return false; // real part numbers are a single token, no spaces
-  const stripped = t.replace(/-/g, '');
+function tokenLooksLikePartNumber(token) {
+  const stripped = token.replace(/-/g, '');
   if (!/^[A-Za-z0-9]+$/.test(stripped)) return false;
   if (stripped.length < 5 || stripped.length > 17) return false;
   if (!/\d/.test(stripped)) return false; // part numbers always contain digits
@@ -531,6 +529,19 @@ function looksLikePartNumber(text) {
   // shouldn't be excluded just because of how it starts.
   if (/^(19|20)\d{2}/.test(stripped) && /[A-Za-z]/.test(stripped.slice(4))) return false;
   return true;
+}
+
+// Scans every word in the message for one shaped like a part number, not
+// just the case where the whole message is a bare part number — catches
+// "84127262 lower panel cover" the same way we already catch a real SKU
+// embedded in a longer description.
+function findPartNumberShapedToken(message) {
+  const tokens = message.split(/\s+/).filter(Boolean);
+  const sorted = [...tokens].sort((a, b) => b.length - a.length);
+  for (const token of sorted) {
+    if (tokenLooksLikePartNumber(token)) return token;
+  }
+  return null;
 }
 
 function extractVin(text) {
@@ -841,12 +852,14 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    // Not in our catalog — but if it's SHAPED like a part number (not a
-    // sentence, vehicle description, or VIN) — say so directly instead of
-    // falling through to the normal vehicle-info flow, which would just
-    // confuse a customer who already gave the one exact identifier that matters.
-    if (!criteria && looksLikePartNumber(message)) {
-      const partNumReply = `We don't currently carry part number "${message.trim()}" — sorry about that! We may add it in the future if there's enough demand. Feel free to <a href="/pages/contact-us">contact us</a> if you'd like us to look into sourcing it.`;
+    // Not in our catalog — but if a word in the message is SHAPED like a
+    // part number (not a sentence, vehicle description, or VIN) — say so
+    // directly instead of falling through to the normal vehicle-info flow,
+    // which would just confuse a customer who already gave the one exact
+    // identifier that matters, even if it's embedded in more text.
+    const shapedPartNumber = criteria ? null : findPartNumberShapedToken(message);
+    if (shapedPartNumber) {
+      const partNumReply = `We don't currently carry part number "${shapedPartNumber}" — sorry about that! We may add it in the future if there's enough demand. Feel free to <a href="/pages/contact-us">contact us</a> if you'd like us to look into sourcing it.`;
       logSearch({ message, criteria: {}, outcome: 'part_number_not_carried', matchCount: 0, reply: partNumReply });
       return res.json({
         reply: partNumReply,
@@ -961,16 +974,6 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    // Now that we know the full vehicle, give a heads-up if it's older —
-    // OEM parts availability genuinely thins out for older model years
-    // since manufacturers mostly keep current-year parts in stock, so it's
-    // worth setting that expectation up front rather than letting a string
-    // of "no match" results feel like something's broken.
-    const oldVehicleNote =
-      criteria.year && criteria.year < 2021
-        ? `Heads up! Since we specialize in genuine OEM parts, our catalog tends to run mostly for newer vehicles — parts for vehicles older than 2021 may be limited or unavailable, as manufacturers typically only stock current-year part fitments. `
-        : '';
-
     // Check this decisively, before any matching runs — a fuzzy/loose match
     // on some unrelated product (e.g. a "brake CLUTCH PEDAL pad" technically
     // containing both words) shouldn't be able to mask this message. If the
@@ -1018,7 +1021,7 @@ app.post('/api/chat', async (req, res) => {
     // across a huge, mostly-unrelated set of products.
     const MAX_REASONABLE_MATCHES = 25;
     if (matches.length > MAX_REASONABLE_MATCHES) {
-      const tooManyReply = oldVehicleNote + compoundNote + didYouMeanNote + `That matches quite a few parts (${matches.length}) — can you tell me more specifically what part you're looking for, or narrow the model/trim?`;
+      const tooManyReply = compoundNote + didYouMeanNote + `That matches quite a few parts (${matches.length}) — can you tell me more specifically what part you're looking for? Or, if you'd like to browse all available parts for your vehicle, you can select your year, make, and model below, and it'll display everything we have for it.`;
       logSearch({ message, criteria, outcome: 'too_many_matches', matchCount: matches.length, reply: tooManyReply });
       return res.json({
         reply: tooManyReply,
@@ -1040,7 +1043,7 @@ app.post('/api/chat', async (req, res) => {
 
     if (groups.length > 1) {
       const options = groups.map((g) => g[0]);
-      const typeSelectReply = oldVehicleNote + compoundNote + didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`;
+      const typeSelectReply = compoundNote + didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`;
       logSearch({
         message,
         criteria,
@@ -1096,7 +1099,7 @@ app.post('/api/chat', async (req, res) => {
     } else {
       reply = `Found ${matches.length} matching options for your vehicle.`;
     }
-    reply = oldVehicleNote + compoundNote + didYouMeanNote + reply;
+    reply = compoundNote + didYouMeanNote + reply;
 
     logSearch({
       message,
