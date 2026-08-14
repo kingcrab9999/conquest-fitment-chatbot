@@ -1007,6 +1007,21 @@ app.post('/api/chat', async (req, res) => {
     matches = filterByQualifiers(matches, criteria);
     matches = filterByKeyword(matches, criteria.keyword);
 
+    // If the strict search (including engine/trim/color/etc.) found nothing,
+    // try again with just year/make/model/keyword — a customer giving extra
+    // detail (like a trim level or engine that doesn't map cleanly to any
+    // stored qualifier) shouldn't turn a real, findable part into a flat
+    // "no match." If the broader search finds something, show it with an
+    // honest disclaimer instead of pretending nothing exists.
+    let uncertainFallback = false;
+    if (matches.length === 0) {
+      const broaderMatches = filterByKeyword(getMatches(criteria.year, criteria.make, criteria.model), criteria.keyword);
+      if (broaderMatches.length > 0) {
+        matches = broaderMatches;
+        uncertainFallback = true;
+      }
+    }
+
     // Surface any typo correction the AI made to the keyword, so the
     // customer sees it was auto-corrected rather than silently guessed —
     // or silently failing if the typo had been left uncorrected.
@@ -1078,6 +1093,10 @@ app.post('/api/chat', async (req, res) => {
         qualifiers.engine.length > 1 ||
         qualifiers.option_package.length > 1);
 
+    const fallbackDisclaimer = uncertainFallback
+      ? `I couldn't find an exact match including all those details — but these could possibly fit your ${criteria.year} ${criteria.make} ${criteria.model}. The specific trim/engine/option details you mentioned aren't confirmed to match, so please double-check before ordering. `
+      : '';
+
     let reply;
     if (matches.length === 0) {
       if (!isKnownPartType(criteria.keyword)) {
@@ -1095,11 +1114,11 @@ app.post('/api/chat', async (req, res) => {
       if (qualifiers.option_package.length > 1) asks.push(`whether you have ${formatList(qualifiers.option_package)}`);
       reply = `I found a few options for that vehicle — I just need to know ${asks.join(', and ')}.`;
     } else if (matches.length === 1) {
-      reply = `Found it — this fits your vehicle.`;
+      reply = uncertainFallback ? `This might fit your vehicle — please double-check before ordering.` : `Found it — this fits your vehicle.`;
     } else {
       reply = `Found ${matches.length} matching options for your vehicle.`;
     }
-    reply = compoundNote + didYouMeanNote + reply;
+    reply = fallbackDisclaimer + compoundNote + didYouMeanNote + reply;
 
     logSearch({
       message,
@@ -1114,8 +1133,9 @@ app.post('/api/chat', async (req, res) => {
       reply,
       criteria,
       matchCount: matches.length,
-      products: matches.slice(0, 20).map((p) => trimForDisplay(p, criteria)),
+      products: matches.slice(0, 20).map((p) => ({ ...trimForDisplay(p, criteria), uncertain: uncertainFallback })),
       qualifiers,
+      uncertainMatch: uncertainFallback,
     });
   } catch (e) {
     console.error('Chat error:', e.message);
