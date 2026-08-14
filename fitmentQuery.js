@@ -139,10 +139,44 @@ function modelMatches(customerModel, storedModel) {
   return s.startsWith(c + ' ') || s.startsWith(c + '-');
 }
 
+// Ram trucks split off from Dodge as their own brand in 2010, but this
+// catalog's fitment data was extracted inconsistently over time — some
+// listings are tagged make="Dodge" + model="Ram 1500", others make="Ram" +
+// model="1500", for what's conceptually the exact same vehicle. These
+// helpers treat both conventions as equivalent everywhere matching happens,
+// so it doesn't matter which way a given listing (or a customer) phrases it.
+function isDodgeOrRamMake(make) {
+  const k = normalizeKey(make);
+  return k === 'dodge' || k === 'ram';
+}
+function stripLeadingRam(model) {
+  return (model || '').replace(/^ram\s+/i, '').trim();
+}
+
 function getMatches(year, make, model) {
   const index = loadIndex();
   const correctedMake = make ? fuzzyCorrectVehicleName(make, getAllKnownMakes()) : make;
   const makeKey = normalizeKey(correctedMake);
+  const ramBrandMatch = isDodgeOrRamMake(correctedMake);
+
+  function makeOk(p) {
+    if (!makeKey) return true;
+    if (ramBrandMatch) return p.makes.some((m) => isDodgeOrRamMake(m));
+    return p.makes.some((m) => normalizeKey(m) === makeKey);
+  }
+
+  function modelOk(p, useModel) {
+    if (!useModel) return true;
+    if (p.models.some((m) => modelMatches(useModel, m))) return true;
+    // For Ram/Dodge specifically, also compare with a leading "Ram " on
+    // either side stripped, since that's exactly where the two tagging
+    // conventions diverge ("Ram 1500" vs "1500").
+    if (ramBrandMatch) {
+      const strippedInput = stripLeadingRam(useModel);
+      if (p.models.some((m) => modelMatches(strippedInput, stripLeadingRam(m)))) return true;
+    }
+    return false;
+  }
 
   // Try the model as given first (handles both exact matches and the
   // trim-suffix case above). Only fall back to typo-correction if that
@@ -151,10 +185,8 @@ function getMatches(year, make, model) {
   // instead of matching all of them via the prefix check.
   let workingModel = model;
   if (model) {
-    const candidates = index.products.filter(
-      (p) => coversYear(p, year) && (!makeKey || p.makes.some((m) => normalizeKey(m) === makeKey))
-    );
-    const hasDirectMatch = candidates.some((p) => p.models.some((m) => modelMatches(model, m)));
+    const candidates = index.products.filter((p) => coversYear(p, year) && makeOk(p));
+    const hasDirectMatch = candidates.some((p) => modelOk(p, model));
     if (!hasDirectMatch) {
       workingModel = fuzzyCorrectVehicleName(model, getAllKnownModels());
     }
@@ -162,8 +194,8 @@ function getMatches(year, make, model) {
 
   return index.products.filter((p) => {
     if (!coversYear(p, year)) return false;
-    if (makeKey && !p.makes.some((m) => normalizeKey(m) === makeKey)) return false;
-    if (workingModel && !p.models.some((m) => modelMatches(workingModel, m))) return false;
+    if (!makeOk(p)) return false;
+    if (!modelOk(p, workingModel)) return false;
     return true;
   });
 }
