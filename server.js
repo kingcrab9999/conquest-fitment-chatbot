@@ -69,7 +69,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-admin-secret');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
@@ -411,6 +411,18 @@ app.get('/api/admin/search-log', (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 200, 2000);
     const entries = lines.slice(-limit).map((line) => JSON.parse(line)).reverse();
     res.json({ entries, total: lines.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/admin/search-log', (req, res) => {
+  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    if (fs.existsSync(SEARCH_LOG_FILE)) fs.unlinkSync(SEARCH_LOG_FILE);
+    res.json({ success: true, cleared: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

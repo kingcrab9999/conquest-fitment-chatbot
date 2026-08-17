@@ -65,6 +65,7 @@
     <label style="margin-left:10px;">Admin Secret: </label>
     <input id="secret" type="password" placeholder="paste your ADMIN_SECRET" />
     <button onclick="loadLog()">Load</button>
+    <button onclick="clearLog()" style="background:#fff; color:#b53a15; border:2px solid #b53a15;">Clear Log</button>
   </div>
   <div id="status"></div>
   <div id="conversations"></div>
@@ -182,6 +183,29 @@
         });
       } catch (err) {
         status.textContent = 'Error loading log: ' + err.message;
+      }
+    }
+
+    async function clearLog() {
+      const apiBase = document.getElementById('apiBase').value.trim();
+      const secret = document.getElementById('secret').value.trim();
+      if (!confirm('This permanently deletes every logged search. This cannot be undone. Continue?')) return;
+
+      const status = document.getElementById('status');
+      status.textContent = 'Clearing…';
+      try {
+        const res = await fetch(`${apiBase}/api/admin/search-log`, {
+          method: 'DELETE',
+          headers: { 'x-admin-secret': secret },
+        });
+        if (res.status === 401) {
+          status.textContent = 'Wrong secret — check your ADMIN_SECRET value.';
+          return;
+        }
+        document.getElementById('conversations').innerHTML = '';
+        status.textContent = 'Log cleared.';
+      } catch (err) {
+        status.textContent = 'Error clearing log: ' + err.message;
       }
     }
 
