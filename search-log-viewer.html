@@ -4,23 +4,53 @@
 <meta charset="utf-8" />
 <title>Search Log — Conquest Auto Parts</title>
 <style>
-  body { font-family: -apple-system, sans-serif; max-width: 1100px; margin: 30px auto; padding: 0 20px; color: #1a1d21; }
+  body { font-family: -apple-system, sans-serif; max-width: 900px; margin: 30px auto; padding: 0 20px; color: #1a1d21; background: #faf9f7; }
   h1 { font-size: 20px; }
   .setup { background: #fdf1ec; border: 2px solid #d94a1f; border-radius: 8px; padding: 14px; margin-bottom: 20px; }
   .setup input { padding: 8px 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 6px; width: 320px; }
   .setup button { padding: 8px 14px; font-size: 14px; font-weight: 700; background: #d94a1f; color: #fff; border: none; border-radius: 6px; cursor: pointer; margin-left: 6px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; vertical-align: top; }
-  th { background: #f4f3f1; position: sticky; top: 0; }
-  .outcome { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
-  .outcome-no_match { background: #fde2e2; color: #b53a15; }
-  .outcome-single_match { background: #dff2e6; color: #2f7a52; }
+  #status { color: #5b6472; font-size: 13px; margin: 10px 0 20px; }
+
+  .conversation {
+    background: #fff;
+    border: 1.5px solid #e3e1dc;
+    border-radius: 12px;
+    margin-bottom: 22px;
+    overflow: hidden;
+  }
+  .conv-header {
+    background: #1a1d21;
+    color: #fff;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 700;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .conv-header .no-session { color: #f4b183; font-weight: 500; font-size: 11.5px; }
+  .turn { padding: 12px 16px; border-bottom: 1px solid #f0efec; }
+  .turn:last-child { border-bottom: none; }
+  .turn-time { font-size: 11px; color: #9a9da2; margin-bottom: 6px; }
+  .bubble-row { display: flex; margin-bottom: 8px; }
+  .bubble-row.customer { justify-content: flex-end; }
+  .bubble {
+    max-width: 80%;
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 13.5px;
+    line-height: 1.45;
+  }
+  .bubble.customer { background: #1a1d21; color: #fff; }
+  .bubble.bot { background: #f0efec; color: #1a1d21; }
+  .turn-meta { font-size: 11.5px; color: #8a8f98; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .outcome { padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 700; white-space: nowrap; }
+  .outcome-no_match, .outcome-part_number_not_carried { background: #fde2e2; color: #b53a15; }
+  .outcome-single_match, .outcome-sku_direct_match { background: #dff2e6; color: #2f7a52; }
   .outcome-multiple_matches { background: #eef2fd; color: #3b5bdb; }
-  .outcome-needs_type_selection { background: #fff3d6; color: #a06b00; }
-  .outcome-too_many_matches { background: #fff3d6; color: #a06b00; }
-  .outcome-asked_for_year, .outcome-asked_for_make_model { background: #f0f0ee; color: #5b6472; }
-  .results-list { max-width: 420px; font-size: 12.5px; color: #4b5563; }
-  #status { color: #5b6472; font-size: 13px; margin: 10px 0; }
+  .outcome-needs_type_selection, .outcome-too_many_matches { background: #fff3d6; color: #a06b00; }
+  .outcome-asked_for_year, .outcome-asked_for_make_model, .outcome-asked_for_model { background: #f0f0ee; color: #5b6472; }
+  .products-list { font-size: 11.5px; color: #4b5563; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -33,27 +63,17 @@
     <button onclick="loadLog()">Load</button>
   </div>
   <div id="status"></div>
-  <table id="logTable" style="display:none;">
-    <thead>
-      <tr>
-        <th>Time</th>
-        <th>Query / Criteria</th>
-        <th>Outcome</th>
-        <th>Matches</th>
-        <th>Response Shown</th>
-        <th>Products in Response</th>
-      </tr>
-    </thead>
-    <tbody id="logBody"></tbody>
-  </table>
+  <div id="conversations"></div>
 
   <script>
-    // Remember these locally so you don't have to re-type them every time —
-    // this file lives on your own machine, so it's just this browser's storage.
     const savedBase = localStorage.getItem('cap-log-apiBase');
     const savedSecret = localStorage.getItem('cap-log-secret');
     if (savedBase) document.getElementById('apiBase').value = savedBase;
     if (savedSecret) document.getElementById('secret').value = savedSecret;
+
+    function stripHtml(s) {
+      return (s || '').replace(/<[^>]+>/g, '');
+    }
 
     async function loadLog() {
       const apiBase = document.getElementById('apiBase').value.trim();
@@ -62,14 +82,12 @@
       localStorage.setItem('cap-log-secret', secret);
 
       const status = document.getElementById('status');
-      const table = document.getElementById('logTable');
-      const body = document.getElementById('logBody');
+      const container = document.getElementById('conversations');
       status.textContent = 'Loading…';
-      table.style.display = 'none';
-      body.innerHTML = '';
+      container.innerHTML = '';
 
       try {
-        const res = await fetch(`${apiBase}/api/admin/search-log?limit=500`, {
+        const res = await fetch(`${apiBase}/api/admin/search-log?limit=1000`, {
           headers: { 'x-admin-secret': secret },
         });
         if (res.status === 401) {
@@ -77,35 +95,76 @@
           return;
         }
         const data = await res.json();
-        status.textContent = `Showing ${data.entries.length} of ${data.total} total logged searches.`;
 
+        // Group into conversations by sessionId. Entries logged before
+        // session tracking existed have no sessionId — each of those shows
+        // as its own single-turn conversation rather than being merged
+        // together, since there's no reliable way to group them otherwise.
+        const groups = new Map();
+        let anonCounter = 0;
         data.entries.forEach((e) => {
-          const tr = document.createElement('tr');
-          const time = new Date(e.timestamp).toLocaleString();
-          const criteriaBits = [e.criteria?.year, e.criteria?.make, e.criteria?.model, e.criteria?.keyword]
-            .filter(Boolean).join(' ');
-          const queryText = e.message || criteriaBits || '(narrowing step)';
-          const replyText = e.reply ? e.reply.replace(/<[^>]+>/g, '') : (e.criteria?.error ? `⚠️ ${e.criteria.error}` : '—');
-          const resultsText = (e.results || []).slice(0, 5).map((r) => r.title).join('; ') ||
-            (e.options || []).slice(0, 5).join('; ') || '—';
-
-          tr.innerHTML = `
-            <td>${time}</td>
-            <td><strong>${queryText}</strong><br><span style="color:#8a8f98">${criteriaBits}</span></td>
-            <td><span class="outcome outcome-${e.outcome}">${(e.outcome || '').replace(/_/g, ' ')}</span></td>
-            <td>${e.matchCount ?? '—'}</td>
-            <td class="results-list">${replyText}</td>
-            <td class="results-list">${resultsText}</td>
-          `;
-          body.appendChild(tr);
+          const key = e.sessionId || `__no_session_${anonCounter++}`;
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(e);
         });
-        table.style.display = 'table';
+
+        const conversations = Array.from(groups.entries()).map(([key, entries]) => {
+          entries.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+          return { key, entries, latest: new Date(entries[entries.length - 1].timestamp) };
+        });
+        conversations.sort((a, b) => b.latest - a.latest);
+
+        status.textContent = `${data.total} total logged turns, grouped into ${conversations.length} conversation${conversations.length === 1 ? '' : 's'}.`;
+
+        conversations.forEach((conv) => {
+          const first = conv.entries[0];
+          const startTime = new Date(first.timestamp).toLocaleString();
+          const hasSession = !!first.sessionId;
+
+          const card = document.createElement('div');
+          card.className = 'conversation';
+
+          const header = document.createElement('div');
+          header.className = 'conv-header';
+          header.innerHTML = `
+            <span>Conversation started ${startTime} — ${conv.entries.length} turn${conv.entries.length === 1 ? '' : 's'}</span>
+            ${hasSession ? '' : '<span class="no-session">no session ID (logged before grouping was added)</span>'}
+          `;
+          card.appendChild(header);
+
+          conv.entries.forEach((e) => {
+            const turn = document.createElement('div');
+            turn.className = 'turn';
+            const time = new Date(e.timestamp).toLocaleTimeString();
+            const criteriaBits = [e.criteria?.year, e.criteria?.make, e.criteria?.model, e.criteria?.keyword]
+              .filter(Boolean).join(' ');
+            const customerText = e.message || (criteriaBits ? `[selected: ${criteriaBits}]` : '[narrowing step]');
+            const botText = stripHtml(e.reply) || (e.criteria?.error ? `⚠️ ${e.criteria.error}` : '(no response recorded)');
+            const productsText = (e.results || []).slice(0, 5).map((r) => r.title).join('; ') ||
+              (e.options || []).slice(0, 5).join('; ') || '';
+
+            turn.innerHTML = `
+              <div class="turn-time">${time}</div>
+              <div class="bubble-row customer"><div class="bubble customer"></div></div>
+              <div class="bubble-row bot"><div class="bubble bot"></div></div>
+              <div class="turn-meta">
+                <span class="outcome outcome-${e.outcome}">${(e.outcome || '').replace(/_/g, ' ')}</span>
+                <span>${e.matchCount != null ? e.matchCount + ' match' + (e.matchCount === 1 ? '' : 'es') : ''}</span>
+              </div>
+              ${productsText ? `<div class="products-list">${productsText}</div>` : ''}
+            `;
+            turn.querySelector('.bubble.customer').textContent = customerText;
+            turn.querySelector('.bubble.bot').textContent = botText;
+            card.appendChild(turn);
+          });
+
+          container.appendChild(card);
+        });
       } catch (err) {
         status.textContent = 'Error loading log: ' + err.message;
       }
     }
 
-    // Auto-load immediately if we already have a saved secret from last time.
     if (savedSecret) loadLog();
   </script>
 </body>
