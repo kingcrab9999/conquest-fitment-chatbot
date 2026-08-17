@@ -51,6 +51,10 @@
   .outcome-needs_type_selection, .outcome-too_many_matches { background: #fff3d6; color: #a06b00; }
   .outcome-asked_for_year, .outcome-asked_for_make_model, .outcome-asked_for_model { background: #f0f0ee; color: #5b6472; }
   .products-list { font-size: 11.5px; color: #4b5563; margin-top: 4px; }
+  .purchased-badge {
+    background: #2f7a52; color: #fff; font-size: 11px; font-weight: 800;
+    padding: 3px 10px; border-radius: 999px;
+  }
 </style>
 </head>
 <body>
@@ -96,6 +100,17 @@
         }
         const data = await res.json();
 
+        let sessionOrders = {};
+        try {
+          const soRes = await fetch(`${apiBase}/api/admin/session-orders?days=30`, {
+            headers: { 'x-admin-secret': secret },
+          });
+          const soData = await soRes.json();
+          sessionOrders = soData.sessionOrders || {};
+        } catch (e) {
+          // Purchase data is a bonus, not required — the log itself still works without it.
+        }
+
         // Group into conversations by sessionId. Entries logged before
         // session tracking existed have no sessionId — each of those shows
         // as its own single-turn conversation rather than being merged
@@ -114,12 +129,14 @@
         });
         conversations.sort((a, b) => b.latest - a.latest);
 
-        status.textContent = `${data.total} total logged turns, grouped into ${conversations.length} conversation${conversations.length === 1 ? '' : 's'}.`;
+        const purchasedCount = conversations.filter((c) => c.entries[0].sessionId && sessionOrders[c.entries[0].sessionId]).length;
+        status.textContent = `${data.total} total logged turns, grouped into ${conversations.length} conversation${conversations.length === 1 ? '' : 's'}. ${purchasedCount} led to a purchase.`;
 
         conversations.forEach((conv) => {
           const first = conv.entries[0];
           const startTime = new Date(first.timestamp).toLocaleString();
           const hasSession = !!first.sessionId;
+          const order = first.sessionId ? sessionOrders[first.sessionId] : null;
 
           const card = document.createElement('div');
           card.className = 'conversation';
@@ -128,7 +145,10 @@
           header.className = 'conv-header';
           header.innerHTML = `
             <span>Conversation started ${startTime} — ${conv.entries.length} turn${conv.entries.length === 1 ? '' : 's'}</span>
-            ${hasSession ? '' : '<span class="no-session">no session ID (logged before grouping was added)</span>'}
+            <span style="display:flex; gap:8px; align-items:center;">
+              ${order ? `<span class="purchased-badge">✅ Purchased — ${order.orderName} ($${order.total})</span>` : ''}
+              ${hasSession ? '' : '<span class="no-session">no session ID (logged before grouping was added)</span>'}
+            </span>
           `;
           card.appendChild(header);
 
