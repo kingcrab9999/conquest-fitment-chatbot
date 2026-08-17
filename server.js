@@ -311,6 +311,75 @@ function buildIndexRecord(product) {
   };
 }
 
+// Looks at recent orders for the custom "_cap_session" cart attribute we
+// attach on the product page, and returns a sessionId -> order info map —
+// this is what lets the search log show whether a conversation actually
+// led to a completed purchase. Requires the app's Shopify token to have
+// read_orders access; if it doesn't, this just returns an empty map rather
+// than failing the whole log view.
+app.get('/api/admin/session-orders', async (req, res) => {
+  if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const token = await getShopifyToken();
+    const daysBack = Math.min(Number(req.query.days) || 30, 90);
+    const sinceDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
+
+    const sessionOrders = {};
+    let cursor = null;
+    let hasNextPage = true;
+    let pages = 0;
+
+    while (hasNextPage && pages < 20) {
+      const gqlRes = await fetch(`https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+        body: JSON.stringify({
+          query: `query($cursor: String, $q: String!) {
+            orders(first: 100, after: $cursor, query: $q) {
+              pageInfo { hasNextPage endCursor }
+              edges {
+                node {
+                  name
+                  createdAt
+                  totalPriceSet { shopMoney { amount currencyCode } }
+                  displayFinancialStatus
+                  customAttributes { key value }
+                }
+              }
+            }
+          }`,
+          variables: { cursor, q: `created_at:>=${sinceDate}` },
+        }),
+      });
+      const json = await gqlRes.json();
+      if (json.errors) throw new Error('Shopify order lookup error: ' + JSON.stringify(json.errors));
+      const edges = json.data?.orders?.edges || [];
+      for (const { node } of edges) {
+        const sessionAttr = (node.customAttributes || []).find((a) => a.key === '_cap_session');
+        if (sessionAttr) {
+          sessionOrders[sessionAttr.value] = {
+            orderName: node.name,
+            createdAt: node.createdAt,
+            total: node.totalPriceSet?.shopMoney?.amount,
+            currency: node.totalPriceSet?.shopMoney?.currencyCode,
+            financialStatus: node.displayFinancialStatus,
+          };
+        }
+      }
+      hasNextPage = json.data?.orders?.pageInfo?.hasNextPage || false;
+      cursor = json.data?.orders?.pageInfo?.endCursor || null;
+      pages++;
+    }
+
+    res.json({ sessionOrders, count: Object.keys(sessionOrders).length });
+  } catch (e) {
+    console.error('Session-orders lookup failed:', e.message);
+    res.json({ sessionOrders: {}, count: 0, error: e.message });
+  }
+});
+
 app.get('/api/admin/debug-index', (req, res) => {
   if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
