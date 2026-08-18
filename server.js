@@ -30,6 +30,7 @@ const {
   upsertProduct,
   isKnownPartType,
   isKnownMake,
+  isKnownVehicleTerm,
   findBySku,
   findEmbeddedSku,
   suggestVocabularyTerms,
@@ -620,7 +621,9 @@ function findPartNumberShapedToken(message) {
   const tokens = message.split(/\s+/).filter(Boolean);
   const sorted = [...tokens].sort((a, b) => b.length - a.length);
   for (const token of sorted) {
-    if (tokenLooksLikePartNumber(token)) return token;
+    if (!tokenLooksLikePartNumber(token)) continue;
+    if (isKnownVehicleTerm(token)) continue; // e.g. "Mazda3", "6R140" — real vehicle terms, not part numbers
+    return token;
   }
   return null;
 }
