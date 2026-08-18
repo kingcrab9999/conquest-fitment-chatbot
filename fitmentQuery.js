@@ -271,6 +271,20 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
+// Two words are "related" if they're an exact typo (small edit distance) OR
+// one is a stem/suffix variation of the other — "weatherstrip" vs
+// "weatherstripping", "clip" vs "clips", "bracket" vs "brackets". The
+// prefix check only applies to longer words (5+ chars) specifically so it
+// can't accidentally match short, unrelated words that happen to share a
+// prefix by coincidence.
+function wordsRelated(a, b) {
+  if (a === b) return true;
+  const minLen = Math.min(a.length, b.length);
+  if (minLen >= 5 && (a.startsWith(b) || b.startsWith(a))) return true;
+  const maxDist = 1;
+  return levenshtein(a, b) <= maxDist;
+}
+
 function filterByKeyword(matches, keyword) {
   if (!keyword) return matches;
   const words = keyword.toLowerCase().split(/\s+/).filter(Boolean);
@@ -282,19 +296,11 @@ function filterByKeyword(matches, keyword) {
   if (exact.length > 0) return exact;
 
   // Nothing matched exactly — the AI's typo correction may have missed this
-  // one. Retry with fuzzy word-level matching (small edit distance) before
-  // giving up, so a typo alone doesn't produce a false "not found."
+  // one. Retry with fuzzy/stem word-level matching before giving up, so a
+  // typo or word-form difference alone doesn't produce a false "not found."
   return matches.filter((p) => {
     const titleWords = p.title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-    return words.every((w) => {
-      // Distance 1 only, regardless of word length — the old length-based
-      // bump to 2 was too loose and matched unrelated words like "brake"
-      // vs "bracket" (genuinely 2 edits apart, but not a typo of each
-      // other). Distance 1 still catches real single-letter typos like
-      // "huse" -> "hose".
-      const maxDist = 1;
-      return titleWords.some((tw) => levenshtein(w, tw) <= maxDist);
-    });
+    return words.every((w) => titleWords.some((tw) => wordsRelated(w, tw)));
   });
 }
 
@@ -374,10 +380,10 @@ function groupBySimilarity(matches, threshold = 0.45) {
 function isKnownPartType(keyword) {
   if (!keyword) return true; // no keyword given — not a "we don't carry it" situation
   const index = loadIndex();
-  const vocab = new Set(index.vocabulary || []);
+  const vocab = index.vocabulary || [];
   const words = keyword.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length >= 3);
   if (words.length === 0) return true;
-  return words.some((w) => vocab.has(w));
+  return words.some((w) => vocab.some((v) => wordsRelated(w, v)));
 }
 
 // Strips everything but letters/numbers and uppercases, so "HC3Z-7890-A",
