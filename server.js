@@ -1126,6 +1126,12 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
+    const fallbackDisclaimer = uncertainFallback
+      ? `I couldn't find an exact match including all those details — but these could possibly fit your ${criteria.year} ${criteria.make} ${criteria.model}. The specific trim/engine/option details you mentioned aren't confirmed to match, so please double-check before ordering. `
+      : categoryFallback
+      ? `I couldn't find an exact match for "${criteria.keyword}" — the following are only loosely related (they share the word "${categoryWord}" but may be a completely different part). Please check carefully before choosing: `
+      : '';
+
     // Surface any typo correction the AI made to the keyword, so the
     // customer sees it was auto-corrected rather than silently guessed —
     // or silently failing if the typo had been left uncorrected.
@@ -1162,7 +1168,7 @@ app.post('/api/chat', async (req, res) => {
 
     if (groups.length > 1) {
       const options = groups.map((g) => g[0]);
-      const typeSelectReply = compoundNote + didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`;
+      const typeSelectReply = fallbackDisclaimer + compoundNote + didYouMeanNote + `A few different parts could match "${criteria.keyword || message}" — which one do you need?`;
       logSearch({ sessionId,
         message,
         criteria,
@@ -1175,7 +1181,7 @@ app.post('/api/chat', async (req, res) => {
         reply: typeSelectReply,
         criteria,
         matchCount: matches.length,
-        products: options.map((p) => ({ ...trimForDisplay(p, criteria), shortLabel: buildShortLabel(p, criteria) })),
+        products: options.map((p) => ({ ...trimForDisplay(p, criteria), shortLabel: buildShortLabel(p, criteria), uncertain: categoryFallback })),
         qualifiers: { side: [], position: [], color: [], engine: [], option_package: [] },
         needsProductSelection: true,
       });
@@ -1196,12 +1202,6 @@ app.post('/api/chat', async (req, res) => {
         qualifiers.color.length > 1 ||
         qualifiers.engine.length > 1 ||
         qualifiers.option_package.length > 1);
-
-    const fallbackDisclaimer = uncertainFallback
-      ? `I couldn't find an exact match including all those details — but these could possibly fit your ${criteria.year} ${criteria.make} ${criteria.model}. The specific trim/engine/option details you mentioned aren't confirmed to match, so please double-check before ordering. `
-      : categoryFallback
-      ? `I couldn't find an exact match for "${criteria.keyword}" — but here's what we have in the "${categoryWord}" category for your ${criteria.year} ${criteria.make} ${criteria.model}. These may not be exactly what you're looking for, so please double-check before ordering. `
-      : '';
 
     let reply;
     if (matches.length === 0) {
