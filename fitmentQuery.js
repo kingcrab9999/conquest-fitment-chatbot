@@ -152,7 +152,12 @@ function modelMatches(customerModel, storedModel) {
   if (normalizeKey(customerModel) === normalizeKey(storedModel)) return true;
   const c = customerModel.toLowerCase().trim();
   const s = storedModel.toLowerCase().trim();
-  return s.startsWith(c + ' ') || s.startsWith(c + '-');
+  // Either direction — a generic customer input matching a more-specific
+  // stored model ("ProMaster" -> "ProMaster 1500"), or a customer being
+  // more specific than what's stored ("Transit 250" -> stored "Transit").
+  // Both patterns show up in this catalog depending on how each listing
+  // happened to be tagged.
+  return s.startsWith(c + ' ') || s.startsWith(c + '-') || c.startsWith(s + ' ') || c.startsWith(s + '-');
 }
 
 // Ram trucks split off from Dodge as their own brand in 2010, but this

@@ -1106,6 +1106,26 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
+    // Still nothing — if the keyword is more than one word, try just the
+    // last word (usually the core noun, e.g. "clip" from "molding
+    // retention clip"). A vague or imprecise search shouldn't necessarily
+    // dead-end when something genuinely related exists; cap the result
+    // count so an overly generic word like "cover" doesn't flood the
+    // customer with dozens of unrelated items.
+    let categoryFallback = false;
+    let categoryWord = null;
+    if (matches.length === 0 && !uncertainFallback && criteria.keyword) {
+      const words = criteria.keyword.trim().split(/\s+/);
+      if (words.length > 1) {
+        categoryWord = words[words.length - 1];
+        const categoryMatches = filterByKeyword(getMatches(criteria.year, criteria.make, criteria.model), categoryWord);
+        if (categoryMatches.length > 0 && categoryMatches.length <= 10) {
+          matches = categoryMatches;
+          categoryFallback = true;
+        }
+      }
+    }
+
     // Surface any typo correction the AI made to the keyword, so the
     // customer sees it was auto-corrected rather than silently guessed —
     // or silently failing if the typo had been left uncorrected.
@@ -1179,6 +1199,8 @@ app.post('/api/chat', async (req, res) => {
 
     const fallbackDisclaimer = uncertainFallback
       ? `I couldn't find an exact match including all those details — but these could possibly fit your ${criteria.year} ${criteria.make} ${criteria.model}. The specific trim/engine/option details you mentioned aren't confirmed to match, so please double-check before ordering. `
+      : categoryFallback
+      ? `I couldn't find an exact match for "${criteria.keyword}" — but here's what we have in the "${categoryWord}" category for your ${criteria.year} ${criteria.make} ${criteria.model}. These may not be exactly what you're looking for, so please double-check before ordering. `
       : '';
 
     let reply;
@@ -1198,7 +1220,7 @@ app.post('/api/chat', async (req, res) => {
       if (qualifiers.option_package.length > 1) asks.push(`whether you have ${formatList(qualifiers.option_package)}`);
       reply = `I found a few options for that vehicle — I just need to know ${asks.join(', and ')}.`;
     } else if (matches.length === 1) {
-      reply = uncertainFallback ? `This might fit your vehicle — please double-check before ordering.` : `Found it — this fits your vehicle.`;
+      reply = (uncertainFallback || categoryFallback) ? `This might fit your vehicle — please double-check before ordering.` : `Found it — this fits your vehicle.`;
     } else {
       reply = `Found ${matches.length} matching options for your vehicle.`;
     }
@@ -1217,9 +1239,9 @@ app.post('/api/chat', async (req, res) => {
       reply,
       criteria,
       matchCount: matches.length,
-      products: matches.slice(0, 20).map((p) => ({ ...trimForDisplay(p, criteria), uncertain: uncertainFallback })),
+      products: matches.slice(0, 20).map((p) => ({ ...trimForDisplay(p, criteria), uncertain: uncertainFallback || categoryFallback })),
       qualifiers,
-      uncertainMatch: uncertainFallback,
+      uncertainMatch: uncertainFallback || categoryFallback,
     });
   } catch (e) {
     console.error('Chat error:', e.message);
