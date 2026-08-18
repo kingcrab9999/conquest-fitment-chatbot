@@ -124,6 +124,22 @@ function isKnownMake(make) {
   return getAllKnownMakes().some((m) => normalizeKey(m) === normalizeKey(corrected));
 }
 
+// Checks whether a token is actually a real vehicle make/model ("Mazda3"
+// matching stored "Mazda 3" once spaces are normalized away) or a real word
+// from the catalog's vocabulary (transmission codes like "6R140", engine
+// designations, etc.) — used to stop these from being misread as an
+// unrecognized OEM part number just because they happen to share the same
+// alphanumeric shape.
+function isKnownVehicleTerm(token) {
+  const key = normalizeKey(token);
+  if (!key) return false;
+  const isMakeOrModel = getAllKnownMakes().some((m) => normalizeKey(m) === key) || getAllKnownModels().some((m) => normalizeKey(m) === key);
+  if (isMakeOrModel) return true;
+  const index = loadIndex();
+  const vocab = index.vocabulary || [];
+  return vocab.includes(token.toLowerCase());
+}
+
 // Some models are stored with a trim/weight-class suffix baked in
 // ("ProMaster 1500", "Transit 250") because that's how the listings
 // describe them — but customers naturally just say "ProMaster" or
@@ -424,6 +440,7 @@ module.exports = {
   upsertProduct,
   isKnownPartType,
   isKnownMake,
+  isKnownVehicleTerm,
   findBySku,
   findEmbeddedSku,
   suggestVocabularyTerms,
