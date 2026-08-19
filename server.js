@@ -1118,16 +1118,31 @@ app.post('/api/chat', async (req, res) => {
     // dead-end when something genuinely related exists; cap the result
     // count so an overly generic word like "cover" doesn't flood the
     // customer with dozens of unrelated items.
+    // A handful of words are too generic to be useful as a lone fallback —
+    // "module," "sensor," "switch" etc. cover dozens of unrelated vehicle
+    // systems, so broadening straight down to just one of these produces
+    // noise ("heated seat module" for a "lane keep assist module" search)
+    // rather than anything genuinely related.
+    const TOO_GENERIC_ALONE = new Set(['module', 'sensor', 'switch', 'relay', 'connector']);
+
     let categoryFallback = false;
     let categoryWord = null;
     if (matches.length === 0 && !uncertainFallback && criteria.keyword) {
       const words = criteria.keyword.trim().split(/\s+/);
-      if (words.length > 1) {
-        categoryWord = words[words.length - 1];
-        const categoryMatches = filterByKeyword(getMatches(criteria.year, criteria.make, criteria.model), categoryWord);
-        if (categoryMatches.length > 0 && categoryMatches.length <= 10) {
-          matches = categoryMatches;
+      // Try progressively shorter suffixes (dropping one word at a time
+      // from the front) before resorting to just the single last word —
+      // "assist module" is far more specific than "module" alone, and
+      // should be tried first if it finds anything.
+      for (let start = 1; start < words.length; start++) {
+        const candidate = words.slice(start).join(' ');
+        const isLastWordOnly = start === words.length - 1;
+        if (isLastWordOnly && TOO_GENERIC_ALONE.has(candidate.toLowerCase())) break; // too generic alone — don't show noise, fall through to "not carried"
+        const candidateMatches = filterByKeyword(getMatches(criteria.year, criteria.make, criteria.model), candidate);
+        if (candidateMatches.length > 0 && candidateMatches.length <= 10) {
+          matches = candidateMatches;
           categoryFallback = true;
+          categoryWord = candidate;
+          break;
         }
       }
     }
