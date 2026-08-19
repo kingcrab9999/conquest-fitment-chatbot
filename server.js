@@ -601,6 +601,12 @@ function looksLikeBulkBrowseRequest(text) {
 // that part number" directly instead of treating it as a vehicle/keyword
 // search and asking for a year.
 function tokenLooksLikePartNumber(token) {
+  // A year range ("2020-2023", "2015-20") has a very specific shape — four
+  // digits, a dash, then two or four more digits — that's distinct from how
+  // real part numbers are formatted. Exclude it before the general check,
+  // which would otherwise treat it identically to a legitimate numeric GM
+  // part number starting with 19/20 (like "86287060").
+  if (/^(19|20)\d{2}-((19|20)\d{2}|\d{2})$/.test(token)) return false;
   const stripped = token.replace(/-/g, '');
   if (!/^[A-Za-z0-9]+$/.test(stripped)) return false;
   if (stripped.length < 5 || stripped.length > 17) return false;
