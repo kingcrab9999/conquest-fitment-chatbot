@@ -398,8 +398,9 @@ let rebuildInProgress = false;
 // the next code push. Responds immediately since a full rebuild across
 // 13,000+ products takes longer than a typical HTTP request timeout —
 // check Render's logs, or /api/admin/debug-index afterward, to confirm it
-// actually finished.
-app.post('/api/admin/rebuild-index', (req, res) => {
+// actually finished. Registered for both GET and POST since different
+// schedulers/cron services default to different methods.
+function handleRebuildIndexRequest(req, res) {
   const providedSecret = req.headers['x-admin-secret'] || req.query.secret;
   if (!ADMIN_SECRET || providedSecret !== ADMIN_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -420,7 +421,9 @@ app.post('/api/admin/rebuild-index', (req, res) => {
       rebuildInProgress = false;
     });
   res.json({ started: true });
-});
+}
+app.post('/api/admin/rebuild-index', handleRebuildIndexRequest);
+app.get('/api/admin/rebuild-index', handleRebuildIndexRequest);
 
 app.get('/api/admin/debug-index', (req, res) => {
   if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
