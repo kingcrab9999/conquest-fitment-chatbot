@@ -25,9 +25,11 @@ require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const {
   loadIndex,
   upsertProduct,
+  removeProduct,
   isKnownPartType,
   isKnownMake,
   isKnownVehicleTerm,
@@ -66,7 +68,13 @@ const ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001';
 const PORT = process.env.PORT || 3001;
 
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+// Webhook routes need the RAW body (for HMAC signature verification), so
+// they're excluded from the global JSON parser and given their own raw
+// body-parsing middleware directly on the route instead.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/webhooks/')) return next();
+  express.json({ limit: '10mb' })(req, res, next);
+});
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-admin-secret');
@@ -425,6 +433,71 @@ app.delete('/api/admin/search-log', (req, res) => {
     if (fs.existsSync(SEARCH_LOG_FILE)) fs.unlinkSync(SEARCH_LOG_FILE);
     res.json({ success: true, cleared: true });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Verifies a webhook actually came from Shopify (not a fake request from
+// anyone who finds this URL) by checking the HMAC signature against the
+// raw request body, using the same client secret Shopify signs with.
+function verifyShopifyWebhook(rawBody, hmacHeader) {
+  if (!hmacHeader || !SHOPIFY_CLIENT_SECRET) return false;
+  const digest = crypto.createHmac('sha256', SHOPIFY_CLIENT_SECRET).update(rawBody).digest('base64');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmacHeader));
+  } catch (e) {
+    return false; // length mismatch etc. — definitely not a valid match
+  }
+}
+
+// Real-time counterpart to the on-import reindex endpoint — keeps the live
+// search index from going stale between deploys when a product is deleted
+// or its status changes (draft/archived shouldn't show in search either).
+// Register this URL in Shopify Admin → Settings → Notifications →
+// Webhooks, for both the "Product deletion" and "Product update" topics.
+app.post('/api/webhooks/product', express.raw({ type: 'application/json' }), async (req, res) => {
+  const hmacHeader = req.headers['x-shopify-hmac-sha256'];
+  const topic = req.headers['x-shopify-topic'];
+  if (!verifyShopifyWebhook(req.body, hmacHeader)) {
+    return res.status(401).json({ error: 'Invalid webhook signature' });
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(req.body.toString('utf8'));
+  } catch (e) {
+    return res.status(400).json({ error: 'Invalid JSON payload' });
+  }
+
+  const productId = payload.admin_graphql_api_id || (payload.id ? `gid://shopify/Product/${payload.id}` : null);
+  if (!productId) return res.status(400).json({ error: 'No product id in payload' });
+
+  try {
+    if (topic === 'products/delete') {
+      const removed = removeProduct(productId);
+      console.log(`Webhook: product ${productId} deleted, removed from index: ${removed}`);
+      return res.json({ success: true, removed });
+    }
+
+    if (topic === 'products/update') {
+      if (payload.status && payload.status !== 'active') {
+        const removed = removeProduct(productId);
+        console.log(`Webhook: product ${productId} set to ${payload.status}, removed from index: ${removed}`);
+        return res.json({ success: true, removed });
+      }
+      // Still active — refresh it in case fitment data or price changed,
+      // reusing the exact same fetch/build logic as the import-time reindex.
+      const product = await fetchSingleProduct(productId);
+      if (product) {
+        const record = buildIndexRecord(product);
+        if (record) upsertProduct(record);
+      }
+      return res.json({ success: true, refreshed: true });
+    }
+
+    return res.json({ success: true, ignored: true });
+  } catch (e) {
+    console.error('Webhook processing failed:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
