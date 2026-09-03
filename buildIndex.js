@@ -196,9 +196,17 @@ async function main() {
   console.log(`\nIndex built: ${records.length} products indexed, ${skipped} skipped (no fitment data or no variant).`);
   console.log(`Vocabulary: ${vocabulary.length} distinct part-related words captured.`);
   console.log(`Written to ${OUTPUT_FILE}`);
+  return { productCount: records.length, skipped, vocabularyCount: vocabulary.length };
 }
 
-main().catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+module.exports = { rebuildIndex: main };
+
+// Only auto-run when executed directly (`node buildIndex.js`, as the Render
+// build step does) — not when required as a module by server.js for the
+// on-demand rebuild endpoint.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}
