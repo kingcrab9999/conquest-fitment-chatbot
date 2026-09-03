@@ -33,6 +33,25 @@ function upsertProduct(record) {
   cachedMtime = fs.statSync(INDEX_FILE).mtimeMs;
 }
 
+// Counterpart to upsertProduct — removes a product from the live index
+// immediately (via webhook) instead of waiting for the next full deploy
+// rebuild. Used both for actual deletion and for a product being set to
+// draft/archived (no longer purchasable, so it shouldn't show in search).
+function removeProduct(productId) {
+  const index = loadIndex();
+  const before = index.products.length;
+  index.products = index.products.filter((p) => p.id !== productId);
+  const removed = before !== index.products.length;
+  if (removed) {
+    index.productCount = index.products.length;
+    index.builtAt = new Date().toISOString();
+    fs.writeFileSync(INDEX_FILE, JSON.stringify(index));
+    cachedIndex = index;
+    cachedMtime = fs.statSync(INDEX_FILE).mtimeMs;
+  }
+  return removed;
+}
+
 // Strips everything but letters/numbers and lowercases, so "F-150", "f150",
 // and "F 150" all compare equal. Free-text queries won't always match the
 // catalog's exact formatting, so every make/model comparison goes through
@@ -449,6 +468,7 @@ function suggestVocabularyTerms(keyword, maxSuggestions = 3) {
 module.exports = {
   loadIndex,
   upsertProduct,
+  removeProduct,
   isKnownPartType,
   isKnownMake,
   isKnownVehicleTerm,
