@@ -740,6 +740,13 @@ function findPartNumberShapedToken(message) {
     if (isKnownVehicleTerm(token)) continue; // e.g. "Mazda3", "6R140" — real vehicle terms, not part numbers
     return token;
   }
+  // A real part number can get split across a space instead of a dash
+  // ("83280 A9010") — check the combined form too, so "not carried"
+  // reports the full number rather than just the first fragment.
+  for (let i = 0; i < tokens.length - 1; i++) {
+    const combined = tokens[i] + tokens[i + 1];
+    if (tokenLooksLikePartNumber(combined) && !isKnownVehicleTerm(combined)) return combined;
+  }
   return null;
 }
 
