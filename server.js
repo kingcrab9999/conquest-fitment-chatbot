@@ -45,6 +45,7 @@ const {
   filterByKeyword,
   groupBySimilarity,
 } = require('./fitmentQuery');
+const { rebuildIndex } = require('./buildIndex');
 
 const SEARCH_LOG_FILE = path.join(__dirname, 'search-log.jsonl');
 
@@ -387,6 +388,38 @@ app.get('/api/admin/session-orders', async (req, res) => {
     console.error('Session-orders lookup failed:', e.message);
     res.json({ sessionOrders: {}, count: 0, error: e.message });
   }
+});
+
+let rebuildInProgress = false;
+
+// Triggers a full index rebuild from Shopify, same as what happens at every
+// deploy — but callable anytime, so a daily scheduled trigger (e.g. via a
+// free external cron service) keeps the index fresh without waiting for
+// the next code push. Responds immediately since a full rebuild across
+// 13,000+ products takes longer than a typical HTTP request timeout —
+// check Render's logs, or /api/admin/debug-index afterward, to confirm it
+// actually finished.
+app.post('/api/admin/rebuild-index', (req, res) => {
+  const providedSecret = req.headers['x-admin-secret'] || req.query.secret;
+  if (!ADMIN_SECRET || providedSecret !== ADMIN_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (rebuildInProgress) {
+    return res.json({ started: false, reason: 'A rebuild is already in progress.' });
+  }
+  rebuildInProgress = true;
+  console.log('Scheduled full index rebuild starting...');
+  rebuildIndex()
+    .then((result) => {
+      console.log(`Scheduled rebuild complete: ${result.productCount} products, ${result.vocabularyCount} vocabulary words.`);
+    })
+    .catch((e) => {
+      console.error('Scheduled rebuild failed:', e.message);
+    })
+    .finally(() => {
+      rebuildInProgress = false;
+    });
+  res.json({ started: true });
 });
 
 app.get('/api/admin/debug-index', (req, res) => {
