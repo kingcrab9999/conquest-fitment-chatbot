@@ -171,12 +171,20 @@ function modelMatches(customerModel, storedModel) {
   if (normalizeKey(customerModel) === normalizeKey(storedModel)) return true;
   const c = customerModel.toLowerCase().trim();
   const s = storedModel.toLowerCase().trim();
-  // Either direction — a generic customer input matching a more-specific
-  // stored model ("ProMaster" -> "ProMaster 1500"), or a customer being
-  // more specific than what's stored ("Transit 250" -> stored "Transit").
-  // Both patterns show up in this catalog depending on how each listing
-  // happened to be tagged.
-  return s.startsWith(c + ' ') || s.startsWith(c + '-') || c.startsWith(s + ' ') || c.startsWith(s + '-');
+
+  // Only treat a prefix relationship as the same vehicle when the extra
+  // part is NUMERIC — a trim/weight-class code like "1500", "2500", "250"
+  // reliably means the same underlying vehicle ("ProMaster" vs "ProMaster
+  // 1500", "Transit" vs "Transit 250"). A WORD suffix ("Sport", "EV",
+  // "Hybrid") usually means a genuinely different vehicle — "Bronco" and
+  // "Bronco Sport" are different platforms entirely, same as "Blazer" and
+  // "Blazer EV" — so those must NOT be treated as interchangeable here.
+  const isNumeric = (str) => /^\d+$/.test(str);
+  if (s.startsWith(c + ' ') && isNumeric(s.slice(c.length + 1).trim())) return true;
+  if (c.startsWith(s + ' ') && isNumeric(c.slice(s.length + 1).trim())) return true;
+  if (s.startsWith(c + '-') && isNumeric(s.slice(c.length + 1).trim())) return true;
+  if (c.startsWith(s + '-') && isNumeric(c.slice(s.length + 1).trim())) return true;
+  return false;
 }
 
 // Ram trucks split off from Dodge as their own brand in 2010, but this
@@ -433,6 +441,17 @@ function findEmbeddedSku(message) {
   const sorted = [...tokens].sort((a, b) => b.length - a.length);
   for (const token of sorted) {
     const match = findBySku(token);
+    if (match) return match;
+  }
+  // A real part number can get split across a space instead of a dash
+  // ("83280 A9010" meant to be "83280-A9010") — try adjacent tokens joined
+  // together before giving up, since normalizeSku already strips dashes on
+  // both sides anyway.
+  const allTokens = message.split(/\s+/).filter(Boolean);
+  for (let i = 0; i < allTokens.length - 1; i++) {
+    const combined = allTokens[i] + allTokens[i + 1];
+    if (combined.replace(/[^A-Za-z0-9]/g, '').length < 5) continue;
+    const match = findBySku(combined);
     if (match) return match;
   }
   return null;
