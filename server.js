@@ -742,8 +742,16 @@ function findPartNumberShapedToken(message) {
   }
   // A real part number can get split across a space instead of a dash
   // ("83280 A9010") — check the combined form too, so "not carried"
-  // reports the full number rather than just the first fragment.
+  // reports the full number rather than just the first fragment. Only
+  // attempt this when at least one token already independently looks
+  // part-number-shaped — otherwise an ordinary word next to a year
+  // ("Sport" + "2021") gets misread as a fake part number.
+  const looksLikeFragment = (t) => {
+    const stripped = t.replace(/[^A-Za-z0-9]/g, '');
+    return stripped.length >= 5 && /\d/.test(stripped);
+  };
   for (let i = 0; i < tokens.length - 1; i++) {
+    if (!looksLikeFragment(tokens[i]) && !looksLikeFragment(tokens[i + 1])) continue;
     const combined = tokens[i] + tokens[i + 1];
     if (tokenLooksLikePartNumber(combined) && !isKnownVehicleTerm(combined)) return combined;
   }
