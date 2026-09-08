@@ -445,10 +445,18 @@ function findEmbeddedSku(message) {
   }
   // A real part number can get split across a space instead of a dash
   // ("83280 A9010" meant to be "83280-A9010") — try adjacent tokens joined
-  // together before giving up, since normalizeSku already strips dashes on
-  // both sides anyway.
+  // together before giving up. Only do this when at least one of the two
+  // tokens already independently looks part-number-shaped on its own
+  // (5+ alphanumeric chars, contains a digit) — this is what distinguishes
+  // a genuine split part number from an ordinary word next to a number
+  // ("Sport" + "2021" should never become "Sport2021").
+  const looksLikeFragment = (t) => {
+    const stripped = t.replace(/[^A-Za-z0-9]/g, '');
+    return stripped.length >= 5 && /\d/.test(stripped);
+  };
   const allTokens = message.split(/\s+/).filter(Boolean);
   for (let i = 0; i < allTokens.length - 1; i++) {
+    if (!looksLikeFragment(allTokens[i]) && !looksLikeFragment(allTokens[i + 1])) continue;
     const combined = allTokens[i] + allTokens[i + 1];
     if (combined.replace(/[^A-Za-z0-9]/g, '').length < 5) continue;
     const match = findBySku(combined);
