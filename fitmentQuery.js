@@ -451,8 +451,11 @@ function findEmbeddedSku(message) {
   // a genuine split part number from an ordinary word next to a number
   // ("Sport" + "2021" should never become "Sport2021").
   const looksLikeFragment = (t) => {
+    if (/^(19|20)\d{2}-((19|20)\d{2}|\d{2})$/.test(t)) return false; // year range, not a part-number fragment
     const stripped = t.replace(/[^A-Za-z0-9]/g, '');
-    return stripped.length >= 5 && /\d/.test(stripped);
+    if (stripped.length < 5 || !/\d/.test(stripped)) return false;
+    if (/^(19|20)\d{2}/.test(stripped) && /[A-Za-z]/.test(stripped.slice(4))) return false; // "2023f150" style
+    return true;
   };
   const allTokens = message.split(/\s+/).filter(Boolean);
   for (let i = 0; i < allTokens.length - 1; i++) {
