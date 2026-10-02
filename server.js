@@ -46,6 +46,7 @@ const {
   groupBySimilarity,
 } = require('./fitmentQuery');
 const { rebuildIndex } = require('./buildIndex');
+const { runExtraction } = require('./extractFitment');
 
 const SEARCH_LOG_FILE = path.join(__dirname, 'search-log.jsonl');
 
@@ -424,6 +425,37 @@ function handleRebuildIndexRequest(req, res) {
 }
 app.post('/api/admin/rebuild-index', handleRebuildIndexRequest);
 app.get('/api/admin/rebuild-index', handleRebuildIndexRequest);
+
+let extractionInProgress = false;
+
+// Runs fitment extraction for any product missing it — same logic as
+// manually running extractFitment.js, but callable on a schedule. Responds
+// immediately and runs in the background, since processing even a handful
+// of new products (one AI call each) can take a little while.
+function handleExtractMissingFitmentRequest(req, res) {
+  const providedSecret = req.headers['x-admin-secret'] || req.query.secret;
+  if (!ADMIN_SECRET || providedSecret !== ADMIN_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (extractionInProgress) {
+    return res.json({ started: false, reason: 'Extraction is already in progress.' });
+  }
+  extractionInProgress = true;
+  console.log('Scheduled fitment extraction starting...');
+  runExtraction()
+    .then((result) => {
+      console.log(`Scheduled extraction complete: ${result.succeeded} succeeded, ${result.failed} failed, ${result.alreadyDone} already had data.`);
+    })
+    .catch((e) => {
+      console.error('Scheduled extraction failed:', e.message);
+    })
+    .finally(() => {
+      extractionInProgress = false;
+    });
+  res.json({ started: true });
+}
+app.post('/api/admin/extract-missing-fitment', handleExtractMissingFitmentRequest);
+app.get('/api/admin/extract-missing-fitment', handleExtractMissingFitmentRequest);
 
 app.get('/api/admin/debug-index', (req, res) => {
   if (!ADMIN_SECRET || req.headers['x-admin-secret'] !== ADMIN_SECRET) {
