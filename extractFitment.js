@@ -1,16 +1,21 @@
 /**
  * extractFitment.js
  *
- * One-time batch job: reads every product on parts1.myshopify.com,
- * asks Claude to pull structured fitment data out of the title/tags/description,
- * and writes it back as Shopify metafields under the "fitment" namespace.
+ * Batch job: reads every active product, asks Claude to pull structured
+ * fitment data out of the title/tags/description, and writes it back as
+ * Shopify metafields under the "fitment" namespace.
  *
- * Run once. Safe to re-run — it skips products that already have fitment metafields,
- * so if it dies partway through (rate limit, network blip, ctrl-C) just run it again.
+ * Only processes products that don't already have fitment data — safe to
+ * re-run anytime, including on a schedule, since it always skips anything
+ * already extracted.
  *
- * Usage:
+ * Usage (manual, from your Mac):
  *   cd ~/Desktop/shopify-importer
  *   node extractFitment.js
+ *
+ * Also callable as a module — exports runExtraction(), used by the fitment
+ * chatbot's /api/admin/extract-missing-fitment endpoint so this can run on
+ * a daily schedule without anyone needing to trigger it by hand.
  *
  * Requires in .env (alongside your existing SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET):
  *   ANTHROPIC_API_KEY=sk-ant-...
@@ -30,16 +35,6 @@ const CONCURRENCY_LIMIT = 3; // matches the limit already used in bulk.js
 const API_VERSION = '2024-10';
 const LOG_FILE = path.join(__dirname, 'fitment-extraction-log.jsonl');
 const FAILED_FILE = path.join(__dirname, 'fitment-extraction-failed.jsonl');
-const FORCE_REEXTRACT = process.env.FORCE === 'true';
-
-if (!ANTHROPIC_API_KEY) {
-  console.error('Missing ANTHROPIC_API_KEY in .env — add it and re-run.');
-  process.exit(1);
-}
-if (!SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET) {
-  console.error('Missing SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET in .env.');
-  process.exit(1);
-}
 
 // ---------- Shopify auth (same pattern as server.js) ----------
 
@@ -124,7 +119,6 @@ Given a product title, tags, and description, output ONLY a JSON object (no mark
   "makes": [string],
   "models": [string],
   "side": "driver" | "passenger" | "both" | null,
-  "position": "front" | "rear" | "upper" | "lower" | "both" | null,
   "color": string or null,
   "engine": string or null,
   "option_package": string or null,
@@ -134,12 +128,6 @@ Given a product title, tags, and description, output ONLY a JSON object (no mark
 Rules:
 - Only include a field if the source text actually states it. Never guess or infer beyond what's written.
 - "side" only if the part is explicitly side-specific (driver/passenger/left/right).
-- "position" only if the part is explicitly front/rear/upper/lower-specific — this is REQUIRED whenever the
-  source text states it, even alongside "side". A "front left door" part must have BOTH side="driver" AND
-  position="front" — never drop position just because side is also present. If a vehicle has separate
-  front and rear parts for the same side, omitting position would let a customer confirm the wrong one.
-  Use position="both" when the listing states the part fits EITHER front or rear (a single interchangeable
-  part, not a pair) — same logic as side="both".
 - "engine" only if a specific engine size/type is required for fitment (e.g. "1.4L Turbo", "6.2L").
 - "option_package" for things like tow package, power windows, folding mirrors — features the vehicle must already have.
 - "other_qualifiers" for anything else fitment-relevant that doesn't fit the above (trim level, generation code, cab style, etc.) — keep it short.
@@ -226,27 +214,26 @@ async function processQueue(items, worker, concurrency, onError) {
   return results;
 }
 
-// ---------- Main ----------
+// ---------- Core logic, callable directly or run standalone ----------
 
-async function main() {
+async function runExtraction() {
+  if (!ANTHROPIC_API_KEY) throw new Error('Missing ANTHROPIC_API_KEY in environment.');
+  if (!SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET) throw new Error('Missing SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET in environment.');
+
   console.log('Authenticating with Shopify...');
   const token = await getShopifyAccessToken();
 
   console.log('Fetching products...');
   const allProducts = await fetchAllProducts(token);
 
-  const toProcess = FORCE_REEXTRACT ? allProducts : allProducts.filter((p) => !p.metafield);
+  const toProcess = allProducts.filter((p) => !p.metafield);
   const alreadyDone = allProducts.length - toProcess.length;
-  if (FORCE_REEXTRACT) {
-    console.log(`${allProducts.length} active products found. FORCE mode — reprocessing ALL of them (this re-runs the AI extraction on every product, including ones already done, to backfill the new "position" field).`);
-  } else {
-    console.log(`${allProducts.length} active products found. ${alreadyDone} already have fitment data — skipping those.`);
-  }
+  console.log(`${allProducts.length} active products found. ${alreadyDone} already have fitment data — skipping those.`);
   console.log(`Processing ${toProcess.length} products...`);
 
   if (toProcess.length === 0) {
     console.log('Nothing to do.');
-    return;
+    return { totalProducts: allProducts.length, alreadyDone, processed: 0, succeeded: 0, failed: 0 };
   }
 
   const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
@@ -268,8 +255,6 @@ async function main() {
     (product, err) => {
       failCount++;
       failedStream.write(JSON.stringify({ id: product.id, title: product.title, error: err.message }) + '\n');
-      // Print the first few errors immediately so we don't have to wait for the whole run to finish
-      // to find out something is systematically broken (e.g. bad API key, wrong model name).
       if (printedSampleErrors < 3) {
         printedSampleErrors++;
         console.error(`\n[FAILED] "${product.title}":\n${err.message}\n`);
@@ -286,11 +271,19 @@ async function main() {
   if (failCount > 0 && successCount === 0) {
     console.log(`\nEverything failed — that usually means something systemic (bad API key, wrong model name, or a Shopify permission issue) rather than per-product problems. Check the errors printed above and in ${FAILED_FILE}.`);
   } else if (failCount > 0) {
-    console.log(`Just run this script again — it only processes products missing fitment data, so it'll retry the failures.`);
+    console.log(`Run this again later — it only processes products missing fitment data, so it'll retry the failures.`);
   }
+
+  return { totalProducts: allProducts.length, alreadyDone, processed: toProcess.length, succeeded: successCount, failed: failCount };
 }
 
-main().catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+module.exports = { runExtraction };
+
+// Only auto-run when executed directly (`node extractFitment.js`) — not
+// when required as a module by server.js for the scheduled endpoint.
+if (require.main === module) {
+  runExtraction().catch((err) => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}
