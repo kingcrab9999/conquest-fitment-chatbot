@@ -80,6 +80,7 @@ const PRODUCTS_QUERY = `
           tags
           descriptionHtml
           metafield(namespace: "fitment", key: "extracted") { value }
+          data: metafield(namespace: "fitment", key: "data") { value }
         }
       }
     }
@@ -119,6 +120,7 @@ Given a product title, tags, and description, output ONLY a JSON object (no mark
   "makes": [string],
   "models": [string],
   "side": "driver" | "passenger" | "both" | null,
+  "position": "front" | "rear" | "upper" | "lower" | "both" | null,
   "color": string or null,
   "engine": string or null,
   "option_package": string or null,
@@ -128,6 +130,12 @@ Given a product title, tags, and description, output ONLY a JSON object (no mark
 Rules:
 - Only include a field if the source text actually states it. Never guess or infer beyond what's written.
 - "side" only if the part is explicitly side-specific (driver/passenger/left/right).
+- "position" only if the part is explicitly front/rear/upper/lower-specific — this is REQUIRED whenever the
+  source text states it, even alongside "side". A "front left door" part must have BOTH side="driver" AND
+  position="front" — never drop position just because side is also present. If a vehicle has separate
+  front and rear parts for the same side, omitting position would let a customer confirm the wrong one.
+  Use position="both" when the listing states the part fits EITHER front or rear (a single interchangeable
+  part, not a pair) — same logic as side="both".
 - "engine" only if a specific engine size/type is required for fitment (e.g. "1.4L Turbo", "6.2L").
 - "option_package" for things like tow package, power windows, folding mirrors — features the vehicle must already have.
 - "other_qualifiers" for anything else fitment-relevant that doesn't fit the above (trim level, generation code, cab style, etc.) — keep it short.
@@ -214,6 +222,30 @@ async function processQueue(items, worker, concurrency, onError) {
   return results;
 }
 
+// ---------- Which products need work ----------
+
+// A product needs (re-)extraction if it was never extracted, OR its stored
+// fitment data predates the "position" field (front/rear/upper/lower) —
+// those were extracted by an older version of this script's prompt and
+// would otherwise never show a front/rear check on the product page.
+function needsExtraction(product) {
+  if (!product.metafield) return true;
+  try {
+    const data = JSON.parse(product.data && product.data.value);
+    return !data || !Object.prototype.hasOwnProperty.call(data, 'position');
+  } catch (e) {
+    return true; // flagged as extracted but data missing/unreadable — redo it
+  }
+}
+
+// Guarantees the "position" key always exists after extraction (null if the
+// listing doesn't state one) — otherwise a product the AI leaves position
+// off of would be picked up for re-extraction again every single night.
+function withPositionKey(fitment) {
+  if (!Object.prototype.hasOwnProperty.call(fitment, 'position')) fitment.position = null;
+  return fitment;
+}
+
 // ---------- Core logic, callable directly or run standalone ----------
 
 async function runExtraction() {
@@ -226,10 +258,12 @@ async function runExtraction() {
   console.log('Fetching products...');
   const allProducts = await fetchAllProducts(token);
 
-  const toProcess = allProducts.filter((p) => !p.metafield);
+  const toProcess = allProducts.filter(needsExtraction);
   const alreadyDone = allProducts.length - toProcess.length;
-  console.log(`${allProducts.length} active products found. ${alreadyDone} already have fitment data — skipping those.`);
-  console.log(`Processing ${toProcess.length} products...`);
+  const neverExtracted = allProducts.filter((p) => !p.metafield).length;
+  const missingPosition = toProcess.length - neverExtracted;
+  console.log(`${allProducts.length} active products found. ${alreadyDone} already have current fitment data — skipping those.`);
+  console.log(`Processing ${toProcess.length} products (${neverExtracted} never extracted, ${missingPosition} re-extracting to add the position field)...`);
 
   if (toProcess.length === 0) {
     console.log('Nothing to do.');
@@ -245,7 +279,7 @@ async function runExtraction() {
   await processQueue(
     toProcess,
     async (product) => {
-      const fitment = await extractFitment(product);
+      const fitment = withPositionKey(await extractFitment(product));
       await writeFitmentMetafields(token, product.id, fitment);
       logStream.write(JSON.stringify({ id: product.id, title: product.title, fitment }) + '\n');
       successCount++;
@@ -277,7 +311,7 @@ async function runExtraction() {
   return { totalProducts: allProducts.length, alreadyDone, processed: toProcess.length, succeeded: successCount, failed: failCount };
 }
 
-module.exports = { runExtraction };
+module.exports = { runExtraction, needsExtraction, withPositionKey };
 
 // Only auto-run when executed directly (`node extractFitment.js`) — not
 // when required as a module by server.js for the scheduled endpoint.
