@@ -258,7 +258,10 @@ function getQualifierOptions(matches) {
     return Array.from(values);
   };
   return {
-    side: distinct('side'),
+    // "both" is never offered as a choice — it means the part works on
+    // either side (or is a both-sides kit), which isn't something the
+    // customer decides about their vehicle.
+    side: distinct('side').filter((v) => v !== 'both'),
     position: distinct('position'),
     color: distinct('color'),
     engine: distinct('engine'),
@@ -268,7 +271,9 @@ function getQualifierOptions(matches) {
 
 function filterByQualifiers(matches, answers = {}) {
   return matches.filter((p) => {
-    if (answers.side && p.side && p.side !== answers.side) return false;
+    // A "both" part (fits either side, or a both-sides kit) is a valid
+    // answer to "driver side" or "passenger side" — don't filter it out.
+    if (answers.side && p.side && p.side !== 'both' && p.side !== answers.side) return false;
     if (answers.position && p.position && p.position !== answers.position) return false;
     if (answers.color && p.color && p.color !== answers.color) return false;
     if (answers.engine && p.engine && p.engine !== answers.engine) return false;
